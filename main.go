@@ -3,33 +3,38 @@ package main
 import (
 	"fmt"
 	"signal/internal/doubleratchet"
-	"time"
 )
 
 func main() {
-	state := doubleratchet.State{}
+	sharedSecret := []byte("very secret")
 
-	mk := []byte("keyyy")
+	bobKeyPair, err := doubleratchet.GenerateDH()
+	if err != nil {
+		panic(err)
+	}
+
+	bob, err := doubleratchet.RatchetInitBob(sharedSecret, bobKeyPair)
+	if err != nil {
+		panic(err)
+	}
+
+	alice, err := doubleratchet.RatchetInitAlice(sharedSecret, bobKeyPair.PublicKey())
+	if err != nil {
+		panic(err)
+	}
+
 	plaintext := []byte("Message in a Bottle :)")
-	associatedData := []byte("data")
+	ad := []byte("associatedData")
 
-	now := time.Now()
-	encrypted, err := state.Encrypt(mk, plaintext, associatedData)
-	fmt.Printf("Time taken to encrypt: %dms\n", time.Since(now).Microseconds())
+	header, ciphertext, err := alice.RatchetEncrypt(plaintext, ad)
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Printf("Encrypted: %s\n", string(encrypted))
-	fmt.Printf("Length: %d\n", len(encrypted))
-
-	//mk = []byte("no-keyyy")
-	now = time.Now()
-	decrypted, err := state.Decrypt(mk, encrypted, associatedData)
-	fmt.Printf("Time taken to decrypt: %dms\n", time.Since(now).Microseconds())
+	decryptedPlaintext, err := bob.RatchetDecrypt(header, ciphertext, ad)
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Printf("Decrypted: %s\n", string(decrypted))
+	fmt.Println(string(decryptedPlaintext))
 }

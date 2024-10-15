@@ -9,27 +9,32 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha512"
+	"encoding/gob"
 	"errors"
 	"fmt"
-	"io"
-
 	"golang.org/x/crypto/hkdf"
+	"io"
 )
 
+type mkSkippedKey struct {
+	DH string
+	N  int
+}
+
+// State variables
 type State struct {
-	// State variables
-	DHs       *ecdh.PrivateKey          // DH Ratchet key pair (sending)
-	DHr       *ecdh.PublicKey           // DH Ratchet public key (received)
-	RK        []byte                    // Root key
-	CKs       []byte                    // Chain key (sending)
-	CKr       []byte                    // Chain key (receiving)
-	Ns, Nr    int                       // Message numbers for sending and receiving
-	PN        int                       // Number of messages in the previous sending chain
-	MKSkipped map[string]map[int][]byte // Skipped message keys
+	DHs       *ecdh.PrivateKey        // DH Ratchet key pair (sending)
+	DHr       *ecdh.PublicKey         // DH Ratchet public key (received)
+	RK        []byte                  // Root key
+	CKs       []byte                  // Chain key (sending)
+	CKr       []byte                  // Chain key (receiving)
+	Ns, Nr    int                     // Message numbers for sending and receiving
+	PN        int                     // Number of messages in the previous sending chain
+	MKSkipped map[mkSkippedKey][]byte // Skipped message keys
 }
 
 // GenerateDH returns a new Diffie-Hellman key pair
-func (s *State) GenerateDH() (*ecdh.PrivateKey, error) {
+func GenerateDH() (*ecdh.PrivateKey, error) {
 	curve := ecdh.X25519()
 	pk, err := curve.GenerateKey(rand.Reader)
 	if err != nil {
@@ -39,7 +44,7 @@ func (s *State) GenerateDH() (*ecdh.PrivateKey, error) {
 }
 
 // DH returns the output from the Diffie-Hellman calculation between the private key from the DH key pair dhPair and the DH public key dhPub.
-func (s *State) DH(dhPair *ecdh.PrivateKey, dhPub *ecdh.PublicKey) ([]byte, error) {
+func DH(dhPair *ecdh.PrivateKey, dhPub *ecdh.PublicKey) ([]byte, error) {
 	result, err := dhPair.ECDH(dhPub)
 	if err != nil {
 		return nil, err
@@ -48,7 +53,7 @@ func (s *State) DH(dhPair *ecdh.PrivateKey, dhPub *ecdh.PublicKey) ([]byte, erro
 }
 
 // KDFRootKey returns a pair (32-byte root key, 32-byte chain key) as the output of applying a KDF keyed by a 32-byte root key rk to a Diffie-Hellman output dhOut
-func (s *State) KDFRootKey(rk, dhOut []byte) (rootKey, chainKey []byte, err error) {
+func KDFRootKey(rk, dhOut []byte) (rootKey, chainKey []byte, err error) {
 	// Underlying hash function for HMAC.
 	hash := sha512.New
 
@@ -77,7 +82,7 @@ func (s *State) KDFRootKey(rk, dhOut []byte) (rootKey, chainKey []byte, err erro
 }
 
 // KDFChainKey returns a pair (32-byte chain key, 32-byte message key) as the output of applying a KDF keyed by a 32-byte chain key ck to some constant
-func (s *State) KDFChainKey(ck []byte) (newChainKey, messageKey []byte) {
+func KDFChainKey(ck []byte) (newChainKey, messageKey []byte) {
 	// Underlying hash function for HMAC.
 	hash := sha512.New
 
@@ -98,7 +103,7 @@ func (s *State) KDFChainKey(ck []byte) (newChainKey, messageKey []byte) {
 
 // Encrypt implements the encryption algorithm with AEAD based on AES-256-CBC + HMAC.
 // Encrypt returns an AEAD encryption of plaintext with message key mk. The associatedData is authenticated but is not included in the ciphertext.
-func (s *State) Encrypt(mk, plaintext, associatedData []byte) ([]byte, error) {
+func Encrypt(mk, plaintext, associatedData []byte) ([]byte, error) {
 	keySize := 32
 	authKeySize := 32
 	ivSize := 16 // IV size for AES-CBC
@@ -168,7 +173,7 @@ func unpadPKCS7(data []byte) ([]byte, error) {
 // Decrypt implements the decryption algorithm with AEAD based on AES-256-CBC + HMAC.
 // Returns the AEAD decryption of ciphertext with message key mk.
 // If authentication fails, an error is returned.
-func (s *State) Decrypt(mk, ciphertext, associatedData []byte) ([]byte, error) {
+func Decrypt(mk, ciphertext, associatedData []byte) ([]byte, error) {
 	keySize := 32
 	authKeySize := 32
 	ivSize := 16 // IV size for AES-CBC
@@ -204,6 +209,7 @@ func (s *State) Decrypt(mk, ciphertext, associatedData []byte) ([]byte, error) {
 	mac.Write(ciphertextWithoutHMAC)
 	expectedHMAC := mac.Sum(nil)
 
+	// TODO the error is here
 	if !hmac.Equal(hmacSum, expectedHMAC) {
 		return nil, errors.New("authentication failed")
 	}
@@ -227,10 +233,34 @@ func (s *State) Decrypt(mk, ciphertext, associatedData []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-func (s *State) CreateHeader(dhPair *ecdh.PrivateKey, pn, n int) *MessageHeader {
-	return nil
+func CreateHeader(dhPair *ecdh.PublicKey, pn, n int) *MessageHeader {
+	return &MessageHeader{
+		DH: dhPair,
+		PN: pn,
+		N:  n,
+	}
 }
 
-func (s *State) Concat(ad []byte, header *MessageHeader) ([]byte, error) {
-	return nil, nil
+// Concat Encodes a message header into a parseable byte sequence, prepends the ad byte sequence, and returns the result.
+// If ad is not guaranteed to be a parseable byte sequence,
+// a length value should be prepended to the output to ensure that the output is parseable as a unique pair (ad, header).
+func Concat(ad []byte, header *MessageHeader) ([]byte, error) {
+	payload := ConcatenationPayload{
+		AD: ad,
+		Header: ConcatenationHeader{
+			DH: header.DH.Bytes(),
+			PN: header.PN,
+			N:  header.N,
+		},
+	}
+
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+
+	err := enc.Encode(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
 }
