@@ -1,12 +1,7 @@
 package main
 
-import (
-	"fmt"
-	"signal/internal/doubleratchet"
-)
-
 func main() {
-	sharedSecret := []byte("very secret")
+	/*sharedSecret := []byte("very secret")
 
 	bobKeyPair, err := doubleratchet.GenerateDH()
 	if err != nil {
@@ -36,5 +31,5 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Println(string(decryptedPlaintext))
+	fmt.Println(string(decryptedPlaintext))*/
 }

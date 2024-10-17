@@ -3,20 +3,9 @@ package doubleratchet
 import (
 	"crypto/ecdh"
 	"errors"
-	"log"
 )
 
 /*
-def RatchetInitAlice(state, SK, bob_dh_public_key):
-    state.DHs = GENERATE_DH()
-    state.DHr = bob_dh_public_key
-    state.RK, state.CKs = KDF_RK(SK, DH(state.DHs, state.DHr))
-    state.CKr = None
-    state.Ns = 0
-    state.Nr = 0
-    state.PN = 0
-    state.MKSKIPPED = {}
-
 def RatchetInitBob(state, SK, bob_dh_key_pair):
     state.DHs = bob_dh_key_pair
     state.DHr = None
@@ -30,26 +19,36 @@ def RatchetInitBob(state, SK, bob_dh_key_pair):
 */
 
 // secretKey is the shared secret
-func RatchetInitBob(secretKey []byte, bobDHKeyPair *ecdh.PrivateKey) (s *State, err error) {
-	s = &State{
+func RatchetInitBob(secretKey []byte, bobDHKeyPair *ecdh.PrivateKey) *State {
+	return &State{
+		DHs:       bobDHKeyPair,
 		DHr:       nil,
-		CKr:       nil,
+		RK:        secretKey,
 		CKs:       nil,
+		CKr:       nil,
 		Ns:        0,
 		Nr:        0,
 		PN:        0,
 		MKSkipped: make(map[mkSkippedKey][]byte),
 	}
-
-	s.DHs = bobDHKeyPair
-	s.RK = secretKey
-
-	return s, nil
 }
+
+/*
+def RatchetInitAlice(state, SK, bob_dh_public_key):
+    state.DHs = GENERATE_DH()
+    state.DHr = bob_dh_public_key
+    state.RK, state.CKs = KDF_RK(SK, DH(state.DHs, state.DHr))
+    state.CKr = None
+    state.Ns = 0
+    state.Nr = 0
+    state.PN = 0
+    state.MKSKIPPED = {}
+*/
 
 // secretKey is the shared secret
 func RatchetInitAlice(secretKey []byte, bobDHPublicKey *ecdh.PublicKey) (s *State, err error) {
 	s = &State{
+		DHr:       bobDHPublicKey,
 		CKr:       nil,
 		Ns:        0,
 		Nr:        0,
@@ -61,8 +60,6 @@ func RatchetInitAlice(secretKey []byte, bobDHPublicKey *ecdh.PublicKey) (s *Stat
 	if err != nil {
 		return nil, err
 	}
-
-	s.DHr = bobDHPublicKey
 
 	dhOut, err := DH(s.DHs, s.DHr)
 	if err != nil {
@@ -78,23 +75,24 @@ func RatchetInitAlice(secretKey []byte, bobDHPublicKey *ecdh.PublicKey) (s *Stat
 
 /*
 def RatchetEncrypt(state, plaintext, AD):
-
 	state.CKs, mk = KDF_CK(state.CKs)
 	header = HEADER(state.DHs, state.PN, state.Ns)
 	state.Ns += 1
 	return header, ENCRYPT(mk, plaintext, CONCAT(AD, header))
 */
+
 func (s *State) RatchetEncrypt(plaintext, ad []byte) (header *MessageHeader, ciphertext []byte, err error) {
 	var mk []byte
 	s.CKs, mk = KDFChainKey(s.CKs)
 	s.Ns++
 
-	header = CreateHeader(s.DHs.PublicKey(), s.PN, s.Ns)
+	header = CreateHeader(s.DHs, s.PN, s.Ns)
 	data, err := Concat(ad, header)
 	if err != nil {
 		return nil, nil, err
 	}
 
+	//fmt.Printf("Encrypt called with mk: %v\n plaintext:%v\n associatedData:%v", mk, plaintext, data)
 	ciphertext, err = Encrypt(mk, plaintext, data)
 	if err != nil {
 		return nil, nil, err
@@ -126,7 +124,14 @@ func (s *State) RatchetDecrypt(header *MessageHeader, ciphertext, associatedData
 		return plaintext, nil
 	}
 
-	if header.DH != s.DHr {
+	if header.DH == nil {
+		return nil, errors.New("header.DH is nil")
+	}
+	if s.DHr == nil {
+		return nil, errors.New("s.DHr is nil")
+	}
+
+	if !header.DH.Equal(s.DHr) {
 		err = s.skipMessageKeys(header.PN)
 		if err != nil {
 			*s = backup
@@ -157,7 +162,6 @@ func (s *State) RatchetDecrypt(header *MessageHeader, ciphertext, associatedData
 	plaintext, err = Decrypt(mk, ciphertext, data)
 	if err != nil {
 		*s = backup
-		log.Fatal(err)
 		return nil, err
 	}
 	return plaintext, nil
@@ -171,7 +175,6 @@ def TrySkippedMessageKeys(state, header, ciphertext, AD):
         return DECRYPT(mk, ciphertext, CONCAT(AD, header))
     else:
         return None
-
 */
 
 func (s *State) trySkippedMessageKeys(header *MessageHeader, cypertext, associatedData []byte) ([]byte, error) {
@@ -185,6 +188,9 @@ func (s *State) trySkippedMessageKeys(header *MessageHeader, cypertext, associat
 		data, err := Concat(associatedData, header)
 		if err != nil {
 			return nil, err
+		}
+		if mk != nil {
+			return nil, errors.New("mk is nil, error with pointer or smth")
 		}
 		return Decrypt(mk, cypertext, data)
 	}

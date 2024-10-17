@@ -8,10 +8,10 @@ import (
 	"crypto/ecdh"
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/gob"
 	"errors"
-	"fmt"
 	"golang.org/x/crypto/hkdf"
 	"io"
 )
@@ -55,7 +55,7 @@ func DH(dhPair *ecdh.PrivateKey, dhPub *ecdh.PublicKey) ([]byte, error) {
 // KDFRootKey returns a pair (32-byte root key, 32-byte chain key) as the output of applying a KDF keyed by a 32-byte root key rk to a Diffie-Hellman output dhOut
 func KDFRootKey(rk, dhOut []byte) (rootKey, chainKey []byte, err error) {
 	// Underlying hash function for HMAC.
-	hash := sha512.New
+	hash := sha256.New
 
 	// Cryptographically secure master secret.
 	secret := dhOut
@@ -83,21 +83,23 @@ func KDFRootKey(rk, dhOut []byte) (rootKey, chainKey []byte, err error) {
 
 // KDFChainKey returns a pair (32-byte chain key, 32-byte message key) as the output of applying a KDF keyed by a 32-byte chain key ck to some constant
 func KDFChainKey(ck []byte) (newChainKey, messageKey []byte) {
-	// Underlying hash function for HMAC.
-	hash := sha512.New
+	if len(ck) != 32 {
+		//log.Fatal("chain key must be 32 bytes. Actual:", len(ck))
+		panic("chain key must be 32 bytes. Actual:")
+	}
+	hash := sha256.New
 
-	// Derive next chain key
-	constant := []byte{0x03}
-	hmacChainKey := hmac.New(hash, ck)
-	hmacChainKey.Write(constant)
-	newChainKey = hmacChainKey.Sum(nil)
-
-	// Derive message key
-	constant = []byte{0x0D}
+	// Derive the message key using 0x01 as the input
 	hmacMessageKey := hmac.New(hash, ck)
-	hmacMessageKey.Write(constant)
+	hmacMessageKey.Write([]byte{0x01})
 	messageKey = hmacMessageKey.Sum(nil)
 
+	// Derive the new chain key using 0x02 as the input
+	hmacChainKey := hmac.New(hash, ck)
+	hmacChainKey.Write([]byte{0x02})
+	newChainKey = hmacChainKey.Sum(nil)
+
+	// Both outputs are 32 bytes, as SHA-256 produces a 32-byte digest
 	return newChainKey, messageKey
 }
 
@@ -131,8 +133,6 @@ func Encrypt(mk, plaintext, associatedData []byte) ([]byte, error) {
 		return nil, err
 	}
 	block.BlockSize()
-
-	fmt.Printf("PaddingBytes:%d\n", block.BlockSize())
 
 	paddedPlaintext := padPKCS7(plaintext, block.BlockSize())
 	ciphertext := make([]byte, len(paddedPlaintext))
@@ -209,7 +209,6 @@ func Decrypt(mk, ciphertext, associatedData []byte) ([]byte, error) {
 	mac.Write(ciphertextWithoutHMAC)
 	expectedHMAC := mac.Sum(nil)
 
-	// TODO the error is here
 	if !hmac.Equal(hmacSum, expectedHMAC) {
 		return nil, errors.New("authentication failed")
 	}
@@ -233,9 +232,9 @@ func Decrypt(mk, ciphertext, associatedData []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-func CreateHeader(dhPair *ecdh.PublicKey, pn, n int) *MessageHeader {
+func CreateHeader(dhPair *ecdh.PrivateKey, pn, n int) *MessageHeader {
 	return &MessageHeader{
-		DH: dhPair,
+		DH: dhPair.PublicKey(),
 		PN: pn,
 		N:  n,
 	}
@@ -263,4 +262,30 @@ func Concat(ad []byte, header *MessageHeader) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+func Parse(data []byte) (header *MessageHeader, associatedData []byte, err error) {
+	buf := bytes.NewBuffer(data)
+
+	dec := gob.NewDecoder(buf)
+
+	var payload ConcatenationPayload
+	err = dec.Decode(&payload)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	curve := ecdh.X25519()
+	dh, err := curve.NewPublicKey(payload.Header.DH)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	header = &MessageHeader{
+		DH: dh,
+		PN: payload.Header.PN,
+		N:  payload.Header.N,
+	}
+
+	return header, payload.AD, nil
 }
