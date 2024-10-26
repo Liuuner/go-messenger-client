@@ -40,12 +40,12 @@ func TestConcatAndParseIntegration(t *testing.T) {
 	}
 	associatedData := []byte("associatedData")
 
-	concatinated, err := Concat(associatedData, header)
+	concatenated, err := Concat(associatedData, header)
 	if err != nil {
 		t.Fatal("Concat failed:", err.Error())
 	}
 
-	parsedHeader, parsedAd, err := Parse(concatinated)
+	parsedHeader, parsedAd, err := Parse(concatenated)
 	if err != nil {
 		t.Fatal("Parse failed:", err.Error())
 	}
@@ -93,30 +93,55 @@ func TestKDFRootKey(t *testing.T) {
 	// Fill the byte slice with random data
 	_, err = rand.Read(secretKey)
 	if err != nil {
-		t.Fatal("generating chainKey failed:", err.Error())
+		t.Fatal("generating aliceChainKeyReceiving failed:", err.Error())
 	}
 	if len(secretKey) != 32 {
-		t.Fatal("original chainKey length isn't 32, Actual:", len(secretKey))
+		t.Fatal("original aliceChainKeyReceiving length isn't 32, Actual:", len(secretKey))
 	}
 
-	aliceDHRootKey, err := GenerateDH()
+	aliceDHPrivateKey, err := GenerateDH()
 	if err != nil {
 		t.Fatal("GenerateDH failed:", err.Error())
 	}
 
-	dhOut, err := DH(aliceDHRootKey, bobDHPublicKey)
+	// Alice
+	aliceDhOut, err := DH(aliceDHPrivateKey, bobDHPublicKey)
 	if err != nil {
 		t.Fatal("DH failed:", err.Error())
 	}
-	rootKey, chainKey, err := KDFRootKey(secretKey, dhOut)
+	aliceRootKey, aliceChainKeyReceiving, err := KDFRootKey(secretKey, aliceDhOut)
 	if err != nil {
 		t.Fatal("KDFRootKey failed:", err.Error())
 	}
-	if len(rootKey) != 32 {
-		t.Fatal("rootKey length isn't 32, Actual:", len(rootKey))
+	if len(aliceRootKey) != 32 {
+		t.Fatal("aliceRootKey length isn't 32, Actual:", len(aliceRootKey))
 	}
-	if len(chainKey) != 32 {
-		t.Fatal("message key length isn't 32, Actual:", len(chainKey))
+	if len(aliceChainKeyReceiving) != 32 {
+		t.Fatal("message key length isn't 32, Actual:", len(aliceChainKeyReceiving))
+	}
+
+	// Bob
+	bobDhOut, err := DH(bobDHPrivateKey, aliceDHPrivateKey.PublicKey())
+	if err != nil {
+		t.Fatal("DH failed:", err.Error())
+	}
+	bobRootKey, bobChainKeyReceiving, err := KDFRootKey(secretKey, bobDhOut)
+	if err != nil {
+		t.Fatal("KDFRootKey failed:", err.Error())
+	}
+	if len(bobRootKey) != 32 {
+		t.Fatal("aliceRootKey length isn't 32, Actual:", len(bobRootKey))
+	}
+	if len(bobChainKeyReceiving) != 32 {
+		t.Fatal("message key length isn't 32, Actual:", len(bobChainKeyReceiving))
+	}
+
+	// compare
+	if !bytes.Equal(aliceChainKeyReceiving, bobChainKeyReceiving) {
+		t.Fatal("aliceChainKeyReceiving is not same as bobChainKeyReceiving")
+	}
+	if !bytes.Equal(aliceRootKey, bobRootKey) {
+		t.Fatal("aliceRootKey is not same as bobRootKey")
 	}
 }
 
