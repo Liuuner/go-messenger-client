@@ -125,14 +125,14 @@ func (s *State) RatchetDecrypt(header *MessageHeader, ciphertext, associatedData
 	if err == nil {
 		return plaintext, nil
 	} else {
-		fmt.Printf("TrySkippedMessageKeys failed with error: %s\n", err.Error())
+		//fmt.Printf("TrySkippedMessageKeys failed with error: %s\n", err.Error())
 	}
 
 	if header.DH == nil {
 		return nil, errors.New("header.DH is nil")
 	}
 	if s.DHr == nil {
-		fmt.Println("s.DHr is nil")
+		//fmt.Println("s.DHr is nil")
 		// TODO maybe s.DHr should be set to header.DH
 		s.DHr = header.DH
 		//return nil, errors.New("s.DHr is nil")
@@ -140,37 +140,37 @@ func (s *State) RatchetDecrypt(header *MessageHeader, ciphertext, associatedData
 
 	// make ratchet step if first message
 	if len(s.CKr) == 0 {
-		fmt.Println("s.CKr is nil")
+		//fmt.Println("s.CKr is nil")
 		err = s.dhRatchet(header)
 		if err != nil {
-			fmt.Println("Error in dhRatchet when CKr is nil")
+			//fmt.Println("Error in dhRatchet when CKr is nil")
 			*s = backup
 			return nil, err
 		}
 	}
-	fmt.Println(s.toString())
+	//fmt.Println(s.toString())
 
 	//fmt.Printf("RatchetDecrypt header.DH: %s, s.DHr: %s\n", header.DH.Bytes(), s.DHr.Bytes())
 	if !header.DH.Equal(s.DHr) {
-		fmt.Println("Header.DH isn't equal to s.DHr")
+		//fmt.Println("Header.DH isn't equal to s.DHr")
 		err = s.skipMessageKeys(header.PN)
 		if err != nil {
 			*s = backup
 			return nil, err
 		}
-		fmt.Printf("Run s.dhRatchet\n")
+		//fmt.Printf("Run s.dhRatchet\n")
 		err = s.dhRatchet(header)
 		if err != nil {
 			*s = backup
 			return nil, err
 		}
 	} else {
-		fmt.Println("Header.DH is equal to s.DHr")
+		//fmt.Println("Header.DH is equal to s.DHr")
 		s.Nr++
 
 	}
 
-	fmt.Println("Message Keys to be Skipped", header.N)
+	//fmt.Println("Message Keys to be Skipped", header.N)
 	err = s.skipMessageKeys(header.N)
 	if err != nil {
 		*s = backup
@@ -211,13 +211,13 @@ func (s *State) trySkippedMessageKeys(header *MessageHeader, cypertext, associat
 		N:  header.N,
 	}
 
-	fmt.Printf("TrySkippedMessageKey with key: %+v\n", key)
+	//fmt.Printf("TrySkippedMessageKey with key: %+v\n", key)
 
 	if mk, ok := s.MKSkipped[key]; ok {
-		fmt.Printf("Found Skipped Message Key: %+v\n", key)
-		fmt.Printf("Found Message Key: %+v\n", mk)
+		//fmt.Printf("Found Skipped Message Key: %+v\n", key)
+		//fmt.Printf("Found Message Key: %+v\n", mk)
 		delete(s.MKSkipped, key)
-		fmt.Printf("Found Message Key after deleting entry: %+v\n", mk)
+		//fmt.Printf("Found Message Key after deleting entry: %+v\n", mk)
 		data, err := Concat(associatedData, header)
 		if err != nil {
 			return nil, err
@@ -227,13 +227,13 @@ func (s *State) trySkippedMessageKeys(header *MessageHeader, cypertext, associat
 		}
 		tempPlaintext, tempErr := Decrypt(mk, cypertext, data)
 		if tempErr != nil {
-			fmt.Printf("Error Decrypting Message Key: %+v with error: %s\n", key, err.Error())
+			//fmt.Printf("Error Decrypting Message Key: %+v with error: %s\n", key, err.Error())
 			return nil, tempErr
 		}
-		fmt.Printf("Decrypted Plaintext: %s with Skipped Message Key: %+v\n", tempPlaintext, key)
+		//fmt.Printf("Decrypted Plaintext: %s with Skipped Message Key: %+v\n", tempPlaintext, key)
 		return tempPlaintext, nil
 	}
-	fmt.Printf("No Skipped Message Key Found with Key: %+v\n", key)
+	//fmt.Printf("No Skipped Message Key Found with Key: %+v\n", key)
 	return nil, errors.New("no skipped message keys")
 }
 
@@ -252,7 +252,7 @@ func (s *State) skipMessageKeys(until int) error {
 	if s.Nr+MaxSkip < until {
 		return errors.New("skipping to many messages (MaxSkip)")
 	}
-	fmt.Printf("s.CKr: %s; length: %d\n", s.CKr, len(s.CKr))
+	//fmt.Printf("s.CKr: %s; length: %d\n", s.CKr, len(s.CKr))
 	if len(s.CKr) != 0 {
 		for s.Nr < until {
 			var mk []byte
@@ -261,12 +261,12 @@ func (s *State) skipMessageKeys(until int) error {
 				DH: string(s.DHr.Bytes()),
 				N:  s.Nr,
 			}
-			fmt.Printf("Skipping MessageKey with key: %+v\n", key)
+			//fmt.Printf("Skipping MessageKey with key: %+v\n", key)
 			s.MKSkipped[key] = mk
 			s.Nr++
 		}
 	} else {
-		fmt.Println("s.CKr is nil, cannot skip message keys")
+		//fmt.Println("s.CKr is nil, cannot skip message keys")
 		/*dhOut, err := DH(s.DHs, s.DHr)
 		if err != nil {
 			return err

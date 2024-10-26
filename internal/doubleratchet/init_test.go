@@ -2,7 +2,6 @@ package doubleratchet
 
 import (
 	"bytes"
-	"fmt"
 	"testing"
 )
 
@@ -13,53 +12,74 @@ type message struct {
 }
 
 type testState struct {
-	bob   *State
-	alice *State
+	bob               *State
+	alice             *State
+	aliceSentMessages []*message
+	bobSentMessages   []*message
+	t                 *testing.T
 }
 
 func TestDoubleRatchetIntegrationSimple(t *testing.T) {
-	sharedSecret := []byte("very secret")
+	s := initTest(t, []byte("very secret"))
+
+	s.aliceSendMessages("Hello Bob", "Message in a Bottle :)")
+	s.bobReceiveMessages(2)
+
+	s.bobSendMessages("Hello Alice", "Another Message in a Bottle :)")
+
+	s.aliceReceiveMessages(2)
+	s.bobReceiveMessages(1)
+
+	s.bobSendMessages("blabla")
+	s.aliceReceiveMessages(3)
+	s.aliceReceiveMessages(1)
+}
+
+func (s *testState) bobSendMessages(messages ...string) {
+	for _, msg := range messages {
+		s.bobSentMessages = append(s.bobSentMessages, sendMessage(s.t, s.bob, msg))
+	}
+}
+
+func (s *testState) aliceSendMessages(messages ...string) {
+	for _, msg := range messages {
+		s.aliceSentMessages = append(s.aliceSentMessages, sendMessage(s.t, s.alice, msg))
+	}
+}
+
+func (s *testState) bobReceiveMessages(numbers ...int) {
+	for _, n := range numbers {
+		_ = receiveMessage(s.t, s.bob, s.aliceSentMessages, n)
+	}
+}
+
+func (s *testState) aliceReceiveMessages(numbers ...int) {
+	for _, n := range numbers {
+		_ = receiveMessage(s.t, s.alice, s.bobSentMessages, n)
+	}
+}
+
+func initTest(t *testing.T, sharedSecret []byte) (s *testState) {
+	s = &testState{
+		t: t,
+	}
 
 	bobKeyPair, err := GenerateDH()
 	if err != nil {
 		t.Fatal("Could not generate KeyPair", err.Error())
 	}
 
-	bob := RatchetInitBob(sharedSecret, bobKeyPair)
+	s.bob = RatchetInitBob(sharedSecret, bobKeyPair)
 
-	alice, err := RatchetInitAlice(sharedSecret, bobKeyPair.PublicKey())
+	s.alice, err = RatchetInitAlice(sharedSecret, bobKeyPair.PublicKey())
 	if err != nil {
 		t.Fatal("Could not init Alice", err.Error())
 	}
-
-	var aliceSentMessages []*message
-	var bobSentMessages []*message
-
-	// Alice Send Message 1
-	aliceSentMessages = append(aliceSentMessages, sendMessage(t, alice, "Message in a Bottle :)"))
-
-	// Alice Send Message 2
-	aliceSentMessages = append(aliceSentMessages, sendMessage(t, alice, "Another Message in a Bottle :)"))
-
-	fmt.Println(alice.toString())
-
-	// Bob Receive Message 2
-	_ = receiveMessage(t, bob, aliceSentMessages, 2)
-
-	//Bob Send Message 1 TODO Error comes from here (Bob can't send Messages yet)
-	bobSentMessages = append(bobSentMessages, sendMessage(t, bob, "Message in a Bottle :)"))
-	bobSentMessages = append(bobSentMessages, sendMessage(t, bob, "Message in a Bottle :)"))
-
-	// Alice Receive Message 1
-	_ = receiveMessage(t, alice, bobSentMessages, 2)
-	_ = receiveMessage(t, alice, bobSentMessages, 1)
-
-	// Bob Receive Message 1
-	_ = receiveMessage(t, bob, aliceSentMessages, 1)
+	return
 }
 
 func sendMessage(t *testing.T, s *State, msg string) *message {
-	fmt.Println("################## sendMessage ##################")
+	//fmt.Println("################## sendMessages ##################")
 
 	plaintext := []byte(msg)
 	ad := []byte("associatedData")
@@ -69,7 +89,7 @@ func sendMessage(t *testing.T, s *State, msg string) *message {
 		t.Fatal("Could not encrypt message", err.Error())
 	}
 
-	fmt.Printf("################## ----------- ##################\n\n\n")
+	//fmt.Printf("################## ----------- ##################\n\n\n")
 	return &message{
 		plaintext:  plaintext,
 		ciphertext: ciphertext,
@@ -80,7 +100,7 @@ func sendMessage(t *testing.T, s *State, msg string) *message {
 func receiveMessage(t *testing.T, s *State, messages []*message, n int) []byte {
 	message := messages[n-1]
 	messages[n-1] = nil
-	fmt.Printf("################## receiveMessage %d ##################\n", n)
+	//fmt.Printf("################## receiveMessage %d ##################\n", n)
 
 	ad := []byte("associatedData")
 	decryptedPlaintext, err := s.RatchetDecrypt(message.header, message.ciphertext, ad)
@@ -91,9 +111,9 @@ func receiveMessage(t *testing.T, s *State, messages []*message, n int) []byte {
 	if !bytes.Equal(message.plaintext, decryptedPlaintext) {
 		t.Fatal("Did not receive the correct plaintext")
 	} else {
-		t.Log("Successfully decrypted message")
+		t.Logf("Successfully decrypted message: %d", n)
 	}
 
-	fmt.Printf("################## -------------- ##################\n\n\n")
+	//fmt.Printf("################## -------------- ##################\n\n\n")
 	return decryptedPlaintext
 }
