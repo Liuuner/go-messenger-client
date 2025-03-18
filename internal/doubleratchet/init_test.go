@@ -25,6 +25,27 @@ func TestDoubleRatchetIntegrationSimple(t *testing.T) {
 	s.aliceSendMessages("Hello Bob", "Message in a Bottle :)")
 	s.bobReceiveMessages(2)
 
+	// Fail Case 1: Alice sends a message with N=3000 (MaxSkip=1000)
+	s.aliceSendMessages("this should not be received")
+	s.aliceSentMessages[2].header.N = 3000
+	err := s.bobReceiveMessageUnsafe(s.aliceSentMessages[2])
+	if err == nil {
+		t.Fatal("Should not be able to decrypt message with N=3000")
+	} else {
+		t.Log("Correctly failed to decrypt message with N=3000", err.Error())
+	}
+
+	// Fail Case 2: Alice sends a message with N=10
+	// Bobs state should be backed up and restored so following messages can be decrypted
+	s.aliceSendMessages("this should not be received")
+	s.aliceSentMessages[2].header.N = 10
+	err = s.bobReceiveMessageUnsafe(s.aliceSentMessages[2])
+	if err == nil {
+		t.Fatal("Should not be able to decrypt message")
+	} else {
+		t.Log("Correctly failed to decrypt message", err.Error())
+	}
+
 	s.bobSendMessages("Hello Alice", "Another Message in a Bottle :)")
 
 	s.aliceReceiveMessages(2)
@@ -57,6 +78,16 @@ func (s *testState) aliceReceiveMessages(numbers ...int) {
 	for _, n := range numbers {
 		_ = receiveMessage(s.t, s.alice, s.bobSentMessages, n)
 	}
+}
+
+func (s *testState) bobReceiveMessageUnsafe(message *message) error {
+	ad := []byte("associatedData")
+	_, err := s.bob.RatchetDecrypt(message.header, message.ciphertext, ad)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func initTest(t *testing.T, sharedSecret []byte) (s *testState) {
