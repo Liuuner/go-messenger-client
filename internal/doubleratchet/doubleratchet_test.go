@@ -2,164 +2,149 @@ package doubleratchet
 
 import (
 	"bytes"
-	"crypto/rand"
 	"testing"
 )
 
-func TestEncryptAndDecryptIntegration(t *testing.T) {
-	mk := []byte("keyyy")
-	plaintext := []byte("Message in a Bottle :)")
-	associatedData := []byte("associatedData")
+type message struct {
+	header     *Info
+	ciphertext []byte
+	plaintext  []byte
+}
 
-	encrypted, err := Encrypt(mk, plaintext, associatedData)
-	if err != nil {
-		t.Fatal("Encrypt failed:", err.Error())
+type testState struct {
+	bob               *State
+	alice             *State
+	aliceSentMessages []*message
+	bobSentMessages   []*message
+	t                 *testing.T
+}
+
+func TestDoubleRatchetIntegrationSimple(t *testing.T) {
+	s := initTest(t, []byte("very secret"))
+
+	s.aliceSendMessages("Hello Bob", "Message in a Bottle :)")
+	s.bobReceiveMessages(2)
+
+	// Fail Case 1: Alice sends a message with N=3000 (MaxSkip=1000)
+	s.aliceSendMessages("this should not be received")
+	s.aliceSentMessages[2].header.N = 3000
+	err := s.bobReceiveMessageUnsafe(s.aliceSentMessages[2])
+	if err == nil {
+		t.Fatal("Should not be able to decrypt message with N=3000")
+	} else {
+		t.Log("Correctly failed to decrypt message with N=3000", err.Error())
 	}
 
-	decrypted, err := Decrypt(mk, encrypted, associatedData)
-	if err != nil {
-		t.Fatal("Decrypt failed:", err.Error())
+	// Fail Case 2: Alice sends a message with N=10
+	// Bobs state should be backed up and restored so following messages can be decrypted
+	s.aliceSendMessages("this should not be received")
+	s.aliceSentMessages[2].header.N = 10
+	err = s.bobReceiveMessageUnsafe(s.aliceSentMessages[2])
+	if err == nil {
+		t.Fatal("Should not be able to decrypt message")
+	} else {
+		t.Log("Correctly failed to decrypt message", err.Error())
 	}
 
-	if !bytes.Equal(plaintext, decrypted) {
-		t.Fatal("Result is not same as Plaintext")
+	s.bobSendMessages("Hello Alice", "Another Message in a Bottle :)")
+
+	s.aliceReceiveMessages(2)
+	s.bobReceiveMessages(1)
+
+	s.bobSendMessages("blabla")
+	s.aliceReceiveMessages(3)
+	s.aliceReceiveMessages(1)
+}
+
+func (s *testState) bobSendMessages(messages ...string) {
+	for _, msg := range messages {
+		s.bobSentMessages = append(s.bobSentMessages, sendMessage(s.t, s.bob, msg))
 	}
 }
 
-func TestConcatAndParseIntegration(t *testing.T) {
-	dhKP, err := GenerateDH()
-	if err != nil {
-		t.Fatal("GenerateDH failed:", err.Error())
-	}
-	dh := dhKP.PublicKey()
-
-	header := &MessageHeader{
-		DH: dh,
-		PN: 13,
-		N:  3,
-	}
-	associatedData := []byte("associatedData")
-
-	concatenated, err := Concat(associatedData, header)
-	if err != nil {
-		t.Fatal("Concat failed:", err.Error())
-	}
-
-	parsedHeader, parsedAd, err := Parse(concatenated)
-	if err != nil {
-		t.Fatal("Parse failed:", err.Error())
-	}
-
-	if !header.Equals(parsedHeader) {
-		t.Fatal("Parsed header is not same as header")
-	}
-	if !bytes.Equal(associatedData, parsedAd) {
-		t.Fatal("Parsed associatedData is not same as associatedData")
+func (s *testState) aliceSendMessages(messages ...string) {
+	for _, msg := range messages {
+		s.aliceSentMessages = append(s.aliceSentMessages, sendMessage(s.t, s.alice, msg))
 	}
 }
 
-func TestKDFChainKey(t *testing.T) {
-	// Create a 32-byte key
-	key := make([]byte, 32)
-
-	// Fill the byte slice with random data
-	_, err := rand.Read(key)
-	if err != nil {
-		t.Fatal("generating chainKey failed:", err.Error())
-	}
-	if len(key) != 32 {
-		t.Fatal("original chainKey length isn't 32, Actual:", len(key))
-	}
-
-	newChainKey, messageKey := KDFChainKey(key)
-	if len(newChainKey) != 32 {
-		t.Fatal("new chainKey length isn't 32, Actual:", len(newChainKey))
-	}
-	if len(messageKey) != 32 {
-		t.Fatal("message key length isn't 32, Actual:", len(messageKey))
+func (s *testState) bobReceiveMessages(numbers ...int) {
+	for _, n := range numbers {
+		_ = receiveMessage(s.t, s.bob, s.aliceSentMessages, n)
 	}
 }
 
-func TestKDFRootKey(t *testing.T) {
-	bobDHPrivateKey, err := GenerateDH()
-	if err != nil {
-		t.Fatal("GenerateDH failed:", err.Error())
-	}
-	bobDHPublicKey := bobDHPrivateKey.PublicKey()
-
-	// Create a 32-byte key
-	secretKey := make([]byte, 32)
-
-	// Fill the byte slice with random data
-	_, err = rand.Read(secretKey)
-	if err != nil {
-		t.Fatal("generating aliceChainKeyReceiving failed:", err.Error())
-	}
-	if len(secretKey) != 32 {
-		t.Fatal("original aliceChainKeyReceiving length isn't 32, Actual:", len(secretKey))
-	}
-
-	aliceDHPrivateKey, err := GenerateDH()
-	if err != nil {
-		t.Fatal("GenerateDH failed:", err.Error())
-	}
-
-	// Alice
-	aliceDhOut, err := DH(aliceDHPrivateKey, bobDHPublicKey)
-	if err != nil {
-		t.Fatal("DH failed:", err.Error())
-	}
-	aliceRootKey, aliceChainKeyReceiving, err := KDFRootKey(secretKey, aliceDhOut)
-	if err != nil {
-		t.Fatal("KDFRootKey failed:", err.Error())
-	}
-	if len(aliceRootKey) != 32 {
-		t.Fatal("aliceRootKey length isn't 32, Actual:", len(aliceRootKey))
-	}
-	if len(aliceChainKeyReceiving) != 32 {
-		t.Fatal("message key length isn't 32, Actual:", len(aliceChainKeyReceiving))
-	}
-
-	// Bob
-	bobDhOut, err := DH(bobDHPrivateKey, aliceDHPrivateKey.PublicKey())
-	if err != nil {
-		t.Fatal("DH failed:", err.Error())
-	}
-	bobRootKey, bobChainKeyReceiving, err := KDFRootKey(secretKey, bobDhOut)
-	if err != nil {
-		t.Fatal("KDFRootKey failed:", err.Error())
-	}
-	if len(bobRootKey) != 32 {
-		t.Fatal("aliceRootKey length isn't 32, Actual:", len(bobRootKey))
-	}
-	if len(bobChainKeyReceiving) != 32 {
-		t.Fatal("message key length isn't 32, Actual:", len(bobChainKeyReceiving))
-	}
-
-	// compare
-	if !bytes.Equal(aliceChainKeyReceiving, bobChainKeyReceiving) {
-		t.Fatal("aliceChainKeyReceiving is not same as bobChainKeyReceiving")
-	}
-	if !bytes.Equal(aliceRootKey, bobRootKey) {
-		t.Fatal("aliceRootKey is not same as bobRootKey")
+func (s *testState) aliceReceiveMessages(numbers ...int) {
+	for _, n := range numbers {
+		_ = receiveMessage(s.t, s.alice, s.bobSentMessages, n)
 	}
 }
 
-func TestPKCS7PaddingIntegration(t *testing.T) {
-	blockSize := 16
-	data := []byte("abcdefgh")
-
-	padded := padPKCS7(data, blockSize)
-	if len(padded)%blockSize != 0 {
-		t.Fatal("padded data is not a multiple of the block size")
-	}
-
-	unpadded, err := unpadPKCS7(padded)
+func (s *testState) bobReceiveMessageUnsafe(message *message) error {
+	ad := []byte("associatedData")
+	_, err := s.bob.RatchetDecrypt(message.header, message.ciphertext, ad)
 	if err != nil {
-		t.Fatal("unpadPKCS7 failed:", err.Error())
+		return err
 	}
 
-	if !bytes.Equal(unpadded, data) {
-		t.Fatal("unpadPKCS7 is not same as data")
+	return nil
+}
+
+func initTest(t *testing.T, sharedSecret []byte) (s *testState) {
+	s = &testState{
+		t: t,
 	}
+
+	bobKeyPair, err := GenerateDH()
+	if err != nil {
+		t.Fatal("Could not generate KeyPair", err.Error())
+	}
+
+	s.bob = RatchetInitBob(sharedSecret, bobKeyPair)
+
+	s.alice, err = RatchetInitAlice(sharedSecret, bobKeyPair.PublicKey())
+	if err != nil {
+		t.Fatal("Could not init Alice", err.Error())
+	}
+	return
+}
+
+func sendMessage(t *testing.T, s *State, msg string) *message {
+	//fmt.Println("################## sendMessages ##################")
+
+	plaintext := []byte(msg)
+	ad := []byte("associatedData")
+
+	header, ciphertext, err := s.RatchetEncrypt(plaintext, ad)
+	if err != nil {
+		t.Fatal("Could not encrypt message", err.Error())
+	}
+
+	//fmt.Printf("################## ----------- ##################\n\n\n")
+	return &message{
+		plaintext:  plaintext,
+		ciphertext: ciphertext,
+		header:     header,
+	}
+}
+
+func receiveMessage(t *testing.T, s *State, messages []*message, n int) []byte {
+	message := messages[n-1]
+	messages[n-1] = nil
+	//fmt.Printf("################## receiveMessage %d ##################\n", n)
+
+	ad := []byte("associatedData")
+	decryptedPlaintext, err := s.RatchetDecrypt(message.header, message.ciphertext, ad)
+	if err != nil {
+		t.Fatal("Could not decrypt message", err.Error())
+	}
+
+	if !bytes.Equal(message.plaintext, decryptedPlaintext) {
+		t.Fatal("Did not receive the correct plaintext")
+	} else {
+		t.Logf("Successfully decrypted message: %d", n)
+	}
+
+	//fmt.Printf("################## -------------- ##################\n\n\n")
+	return decryptedPlaintext
 }

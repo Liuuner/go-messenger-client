@@ -6,15 +6,15 @@ import (
 
 const MaxSkip = 1000
 
-// MessageHeader holds the Double Ratchet message header.
+// Info holds the Double Ratchet message header.
 // has to stay public for parsing
-type MessageHeader struct {
+type Info struct {
 	DH *ecdh.PublicKey // Ratchet public key
 	PN int             // Previous chain length
 	N  int             // Message number
 }
 
-func (h *MessageHeader) Equals(other *MessageHeader) bool {
+func (h *Info) Equals(other *Info) bool {
 	if h == nil && other == nil {
 		return true
 	}

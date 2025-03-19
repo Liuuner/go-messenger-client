@@ -1,80 +1,12 @@
-package doubleratchet
+package session
 
 import (
-	"crypto/ecdh"
-	"encoding/base64"
 	"errors"
-	"fmt"
-	"maps"
+	"signal/internal/doubleratchet"
+	"signal/internal/types"
 )
 
-/*
-def RatchetInitBob(state, SK, bob_dh_key_pair):
-    state.DHs = bob_dh_key_pair
-    state.DHr = None
-    state.RK = SK
-    state.CKs = None
-    state.CKr = None
-    state.Ns = 0
-    state.Nr = 0
-    state.PN = 0
-    state.MKSKIPPED = {}
-*/
-
-// secretKey is the shared secret
-func RatchetInitBob(secretKey []byte, bobDHKeyPair *ecdh.PrivateKey) *State {
-	return &State{
-		DHs:       bobDHKeyPair,
-		DHr:       nil,
-		RK:        secretKey,
-		CKs:       nil,
-		CKr:       nil,
-		Ns:        0,
-		Nr:        0,
-		PN:        0,
-		MKSkipped: make(map[mkSkippedKey][]byte),
-	}
-}
-
-/*
-def RatchetInitAlice(state, SK, bob_dh_public_key):
-    state.DHs = GENERATE_DH()
-    state.DHr = bob_dh_public_key
-    state.RK, state.CKs = KDF_RK(SK, DH(state.DHs, state.DHr))
-    state.CKr = None
-    state.Ns = 0
-    state.Nr = 0
-    state.PN = 0
-    state.MKSKIPPED = {}
-*/
-
-// secretKey is the shared secret
-func RatchetInitAlice(secretKey []byte, bobDHPublicKey *ecdh.PublicKey) (s *State, err error) {
-	s = &State{
-		DHr:       bobDHPublicKey,
-		CKr:       nil,
-		Ns:        0,
-		Nr:        0,
-		PN:        0,
-		MKSkipped: make(map[mkSkippedKey][]byte),
-	}
-
-	s.DHs, err = GenerateDH()
-	if err != nil {
-		return nil, err
-	}
-
-	dhOut, err := DH(s.DHs, s.DHr)
-	if err != nil {
-		return nil, err
-	}
-	s.RK, s.CKs, err = KDFRootKey(secretKey, dhOut)
-	if err != nil {
-		return nil, err
-	}
-
-	return s, nil
-}
+const MaxSkip = 20
 
 /*
 def RatchetEncrypt(state, plaintext, AD):
@@ -84,13 +16,13 @@ def RatchetEncrypt(state, plaintext, AD):
 	return header, ENCRYPT(mk, plaintext, CONCAT(AD, header))
 */
 
-func (s *State) RatchetEncrypt(plaintext, ad []byte) (header *MessageHeader, ciphertext []byte, err error) {
+func (s *Session) RatchetEncrypt(plaintext, ad []byte) (header *types.MessageHeader, ciphertext []byte, err error) {
 	var mk []byte
-	s.CKs, mk = KDFChainKey(s.CKs)
+	s.CKs, mk = doubleratchet.KDFChainKey(s.CKs)
 	s.Ns++
 
-	header = CreateHeader(s.DHs, s.PN, s.Ns)
-	data, err := Concat(ad, header)
+	header = types.CreateMessageHeader(s.DHs, s.PN, s.Ns)
+	data, err := types.ConcatHeader(ad, header)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -118,7 +50,7 @@ def RatchetDecrypt(state, header, ciphertext, AD):
     return DECRYPT(mk, ciphertext, CONCAT(AD, header))
 */
 
-func (s *State) RatchetDecrypt(header *MessageHeader, ciphertext, associatedData []byte) (plaintext []byte, err error) {
+func (s *Session) RatchetDecrypt(header *types.MessageHeader, ciphertext, associatedData []byte) (plaintext []byte, err error) {
 	backup := *s
 
 	plaintext, err = s.trySkippedMessageKeys(header, ciphertext, associatedData)
@@ -132,6 +64,7 @@ func (s *State) RatchetDecrypt(header *MessageHeader, ciphertext, associatedData
 		return nil, errors.New("header.DH is nil")
 	}
 	if s.DHr == nil {
+		// when first message i think
 		//fmt.Println("s.DHr is nil")
 		// TODO maybe s.DHr should be set to header.DH
 		s.DHr = header.DH
@@ -178,10 +111,10 @@ func (s *State) RatchetDecrypt(header *MessageHeader, ciphertext, associatedData
 	}
 
 	var mk []byte
-	s.CKr, mk = KDFChainKey(s.CKr)
+	s.CKr, mk = doubleratchet.KDFChainKey(s.CKr)
 	s.Nr++
 
-	data, err := Concat(associatedData, header)
+	data, err := types.ConcatHeader(associatedData, header)
 	if err != nil {
 		*s = backup
 		return nil, err
@@ -205,7 +138,7 @@ def TrySkippedMessageKeys(state, header, ciphertext, AD):
         return None
 */
 
-func (s *State) trySkippedMessageKeys(header *MessageHeader, cypertext, associatedData []byte) ([]byte, error) {
+func (s *Session) trySkippedMessageKeys(header *types.MessageHeader, cypertext, associatedData []byte) ([]byte, error) {
 	key := mkSkippedKey{
 		DH: string(header.DH.Bytes()),
 		N:  header.N,
@@ -218,7 +151,7 @@ func (s *State) trySkippedMessageKeys(header *MessageHeader, cypertext, associat
 		//fmt.Printf("Found Message Key: %+v\n", mk)
 		delete(s.MKSkipped, key)
 		//fmt.Printf("Found Message Key after deleting entry: %+v\n", mk)
-		data, err := Concat(associatedData, header)
+		data, err := types.ConcatHeader(associatedData, header)
 		if err != nil {
 			return nil, err
 		}
@@ -248,7 +181,7 @@ def SkipMessageKeys(state, until):
             state.Nr += 1
 */
 
-func (s *State) skipMessageKeys(until int) error {
+func (s *Session) skipMessageKeys(until int) error {
 	if s.Nr+MaxSkip < until {
 		return errors.New("skipping to many messages (MaxSkip)")
 	}
@@ -256,7 +189,7 @@ func (s *State) skipMessageKeys(until int) error {
 	if len(s.CKr) != 0 {
 		for s.Nr < until {
 			var mk []byte
-			s.CKr, mk = KDFChainKey(s.CKr)
+			s.CKr, mk = doubleratchet.KDFChainKey(s.CKr)
 			key := mkSkippedKey{
 				DH: string(s.DHr.Bytes()),
 				N:  s.Nr,
@@ -291,7 +224,7 @@ def DHRatchet(state, header):
     state.RK, state.CKs = KDF_RK(state.RK, DH(state.DHs, state.DHr))
 */
 
-func (s *State) dhRatchet(header *MessageHeader) error {
+func (s *Session) dhRatchet(header *types.MessageHeader) error {
 	s.PN = s.Ns
 	s.Ns = 0
 	s.Nr = 0
@@ -322,25 +255,4 @@ func (s *State) dhRatchet(header *MessageHeader) error {
 		return err
 	}
 	return nil
-}
-
-func (s *State) toString() string {
-	return fmt.Sprintf("State{DHs: %s, DHr: %s, RK: %s, CKs: %s, CKr: %s, Ns: %d, Nr: %d, PN: %d, MKSkipped: %v}",
-		byteSliceToBase64(s.DHs.PublicKey().Bytes()),
-		byteSliceToBase64(s.DHr.Bytes()),
-		byteSliceToBase64(s.RK),
-		byteSliceToBase64(s.CKs),
-		byteSliceToBase64(s.CKr),
-		s.Ns,
-		s.Nr,
-		s.PN,
-		maps.Keys(s.MKSkipped),
-	)
-}
-
-func byteSliceToBase64(data []byte) string {
-	if len(data) == 0 {
-		return ""
-	}
-	return base64.StdEncoding.EncodeToString(data)[:5]
 }

@@ -1,291 +1,339 @@
-// Package doubleratchet is implemented as specified in https://signal.org/docs/specifications/doubleratchet/#external-functions
 package doubleratchet
 
 import (
-	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/ecdh"
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/sha512"
-	"encoding/gob"
+	"encoding/base64"
 	"errors"
-	"golang.org/x/crypto/hkdf"
-	"io"
+	"fmt"
+	"maps"
 )
 
-type mkSkippedKey struct {
-	DH string
-	N  int
+/*
+def RatchetInitBob(state, SK, bob_dh_key_pair):
+    state.DHs = bob_dh_key_pair
+    state.DHr = None
+    state.RK = SK
+    state.CKs = None
+    state.CKr = None
+    state.Ns = 0
+    state.Nr = 0
+    state.PN = 0
+    state.MKSKIPPED = {}
+*/
+
+// secretKey is the shared secret
+func RatchetInitBob(secretKey []byte, bobDHKeyPair *ecdh.PrivateKey) *State {
+	return &State{
+		DHs:       bobDHKeyPair,
+		DHr:       nil,
+		RK:        secretKey,
+		CKs:       nil,
+		CKr:       nil,
+		Ns:        0,
+		Nr:        0,
+		PN:        0,
+		MKSkipped: make(map[mkSkippedKey][]byte),
+	}
 }
 
-// State variables
-type State struct {
-	DHs       *ecdh.PrivateKey        // DH Ratchet key pair (sending)
-	DHr       *ecdh.PublicKey         // DH Ratchet public key (received)
-	RK        []byte                  // Root key
-	CKs       []byte                  // Chain key (sending)
-	CKr       []byte                  // Chain key (receiving)
-	Ns, Nr    int                     // Message numbers for sending and receiving
-	PN        int                     // Number of messages in the previous sending chain
-	MKSkipped map[mkSkippedKey][]byte // Skipped message keys
-}
+/*
+def RatchetInitAlice(state, SK, bob_dh_public_key):
+    state.DHs = GENERATE_DH()
+    state.DHr = bob_dh_public_key
+    state.RK, state.CKs = KDF_RK(SK, DH(state.DHs, state.DHr))
+    state.CKr = None
+    state.Ns = 0
+    state.Nr = 0
+    state.PN = 0
+    state.MKSKIPPED = {}
+*/
 
-// GenerateDH returns a new Diffie-Hellman key pair
-func GenerateDH() (*ecdh.PrivateKey, error) {
-	curve := ecdh.X25519()
-	pk, err := curve.GenerateKey(rand.Reader)
+// secretKey is the shared secret after 3xDH key exchange
+func RatchetInitAlice(secretKey []byte, bobDHPublicKey *ecdh.PublicKey) (s *State, err error) {
+	s = &State{
+		DHr:       bobDHPublicKey,
+		CKr:       nil,
+		Ns:        0,
+		Nr:        0,
+		PN:        0,
+		MKSkipped: make(map[mkSkippedKey][]byte),
+	}
+
+	s.DHs, err = GenerateDH()
 	if err != nil {
 		return nil, err
 	}
-	return pk, nil
-}
 
-// DH returns the output from the Diffie-Hellman calculation between the private key from the DH key pair dhPair and the DH public key dhPub.
-func DH(dhPair *ecdh.PrivateKey, dhPub *ecdh.PublicKey) ([]byte, error) {
-	result, err := dhPair.ECDH(dhPub)
+	dhOut, err := DH(s.DHs, s.DHr)
 	if err != nil {
 		return nil, err
 	}
-	return result, nil
+	s.RK, s.CKs, err = KDFRootKey(secretKey, dhOut)
+	if err != nil {
+		return nil, err
+	}
+
+	return s, nil
 }
 
-// KDFRootKey returns a pair (32-byte root key, 32-byte chain key) as the output of applying a KDF keyed by a 32-byte root key rk to a Diffie-Hellman output dhOut
-func KDFRootKey(rk, dhOut []byte) (rootKey, chainKey []byte, err error) {
-	// Underlying hash function for HMAC.
-	hash := sha256.New
+/*
+def RatchetEncrypt(state, plaintext, AD):
+	state.CKs, mk = KDF_CK(state.CKs)
+	header = HEADER(state.DHs, state.PN, state.Ns)
+	state.Ns += 1
+	return header, ENCRYPT(mk, plaintext, CONCAT(AD, header))
+*/
 
-	// Cryptographically secure master secret.
-	secret := dhOut
+func (s *State) RatchetEncrypt(plaintext, associatedData []byte) (ciphertext []byte, err error) {
+	var mk []byte
+	s.CKs, mk = KDFChainKey(s.CKs)
+	s.Ns++
 
-	// Salt
-	salt := rk
+	//fmt.Printf("Encrypt called with mk: %v\n plaintext:%v\n associatedData:%v", mk, plaintext, data)
+	ciphertext, err = Encrypt(mk, plaintext, associatedData)
+	if err != nil {
+		return nil, err
+	}
 
-	// Non-secret context info
-	info := []byte("doubleratchet.KDFRootKey")
+	return ciphertext, nil
+}
 
-	kdf := hkdf.New(hash, secret, salt, info)
+/*
+def RatchetDecrypt(state, header, ciphertext, AD):
+    plaintext = TrySkippedMessageKeys(state, header, ciphertext, AD)
+    if plaintext != None:
+        return plaintext
+    if header.dh != state.DHr:
+        SkipMessageKeys(state, header.pn)
+        DHRatchet(state, header)
+    SkipMessageKeys(state, header.n)
+    state.CKr, mk = KDF_CK(state.CKr)
+    state.Nr += 1
+    return DECRYPT(mk, ciphertext, CONCAT(AD, header))
+*/
 
-	// Read two Keys
-	var keys [][]byte
-	for range 2 {
-		key := make([]byte, 32)
-		if _, err := io.ReadFull(kdf, key); err != nil {
-			return nil, nil, err
+func (s *State) RatchetDecrypt(info *Info, ciphertext, associatedData []byte) (plaintext []byte, err error) {
+	backup := *s
+
+	plaintext, err = s.trySkippedMessageKeys(info, ciphertext, associatedData)
+	if err == nil {
+		return plaintext, nil
+	} else {
+		//fmt.Printf("TrySkippedMessageKeys failed with error: %s\n", err.Error())
+	}
+
+	if info.DH == nil {
+		return nil, errors.New("info.DH is nil")
+	}
+	if s.DHr == nil {
+		//fmt.Println("s.DHr is nil")
+		// TODO maybe s.DHr should be set to info.DH
+		s.DHr = info.DH
+		//return nil, errors.New("s.DHr is nil")
+	}
+
+	// make ratchet step if first message
+	if len(s.CKr) == 0 {
+		//fmt.Println("s.CKr is nil")
+		err = s.dhRatchet(info)
+		if err != nil {
+			//fmt.Println("Error in dhRatchet when CKr is nil")
+			*s = backup
+			return nil, err
 		}
-		keys = append(keys, key)
+	}
+	//fmt.Println(s.toString())
+
+	//fmt.Printf("RatchetDecrypt info.DH: %s, s.DHr: %s\n", info.DH.Bytes(), s.DHr.Bytes())
+	if !info.DH.Equal(s.DHr) {
+		//fmt.Println("Header.DH isn't equal to s.DHr")
+		err = s.skipMessageKeys(info.PN)
+		if err != nil {
+			*s = backup
+			return nil, err
+		}
+		//fmt.Printf("Run s.dhRatchet\n")
+		err = s.dhRatchet(info)
+		if err != nil {
+			*s = backup
+			return nil, err
+		}
+	} else {
+		//fmt.Println("Header.DH is equal to s.DHr")
+		s.Nr++
 	}
 
-	return keys[0], keys[1], nil
-}
-
-// KDFChainKey returns a pair (32-byte chain key, 32-byte message key) as the output of applying a KDF keyed by a 32-byte chain key ck to some constant
-func KDFChainKey(ck []byte) (newChainKey, messageKey []byte) {
-	if len(ck) != 32 {
-		//log.Fatal("chain key must be 32 bytes. Actual:", len(ck))
-		panic("chain key must be 32 bytes. Actual:")
-	}
-	hash := sha256.New
-
-	// Derive the message key using 0x01 as the input
-	hmacMessageKey := hmac.New(hash, ck)
-	hmacMessageKey.Write([]byte{0x01})
-	messageKey = hmacMessageKey.Sum(nil)
-
-	// Derive the new chain key using 0x02 as the input
-	hmacChainKey := hmac.New(hash, ck)
-	hmacChainKey.Write([]byte{0x02})
-	newChainKey = hmacChainKey.Sum(nil)
-
-	// Both outputs are 32 bytes, as SHA-256 produces a 32-byte digest
-	return newChainKey, messageKey
-}
-
-// Encrypt implements the encryption algorithm with AEAD based on AES-256-CBC + HMAC.
-// Encrypt returns an AEAD encryption of plaintext with message key mk. The associatedData is authenticated but is not included in the ciphertext.
-func Encrypt(mk, plaintext, associatedData []byte) ([]byte, error) {
-	keySize := 32
-	authKeySize := 32
-	ivSize := 16 // IV size for AES-CBC
-	outputLength := keySize + authKeySize + ivSize
-	hash := sha512.New
-
-	// Step 1: Derive keys and IV using HKDF
-	info := []byte("doubleratchet.Encrypt")
-	salt := make([]byte, hash().Size())
-	kdf := hkdf.New(hash, mk, salt, info)
-
-	keyMaterial := make([]byte, outputLength)
-	if _, err := io.ReadFull(kdf, keyMaterial); err != nil {
-		return nil, err
-	}
-
-	// separate Key Material into the parts
-	encKey := keyMaterial[:keySize]
-	authKey := keyMaterial[keySize : keySize+authKeySize]
-	iv := keyMaterial[keySize+authKeySize:]
-
-	// Step 2: Encrypt plaintext using AES-256 in CBC mode
-	block, err := aes.NewCipher(encKey)
+	//fmt.Println("Message Keys to be Skipped", info.N)
+	err = s.skipMessageKeys(info.N)
 	if err != nil {
-		return nil, err
-	}
-	block.BlockSize()
-
-	paddedPlaintext := padPKCS7(plaintext, block.BlockSize())
-	ciphertext := make([]byte, len(paddedPlaintext))
-
-	mode := cipher.NewCBCEncrypter(block, iv)
-	mode.CryptBlocks(ciphertext, paddedPlaintext)
-
-	// Step 3: Compute HMAC
-	mac := hmac.New(hash, authKey)
-	mac.Write(associatedData)
-	mac.Write(ciphertext)
-	hmacSum := mac.Sum(nil)
-
-	// Step 4: Return ciphertext with HMAC appended
-	return append(ciphertext, hmacSum...), nil
-}
-
-// PKCS7 padding for AES CBC mode
-func padPKCS7(data []byte, blockSize int) []byte {
-	padLen := blockSize - len(data)%blockSize
-	padding := bytes.Repeat([]byte{byte(padLen)}, padLen)
-	return append(data, padding...)
-}
-
-// Unpad PKCS7
-func unpadPKCS7(data []byte) ([]byte, error) {
-	length := len(data)
-	if length == 0 {
-		return nil, errors.New("invalid padding size")
-	}
-	padLen := int(data[length-1])
-	if padLen > length {
-		return nil, errors.New("invalid padding")
-	}
-	return data[:length-padLen], nil
-}
-
-// Decrypt implements the decryption algorithm with AEAD based on AES-256-CBC + HMAC.
-// Returns the AEAD decryption of ciphertext with message key mk.
-// If authentication fails, an error is returned.
-func Decrypt(mk, ciphertext, associatedData []byte) ([]byte, error) {
-	keySize := 32
-	authKeySize := 32
-	ivSize := 16 // IV size for AES-CBC
-	hash := sha512.New
-
-	// Step 1: Separate the HMAC from the ciphertext
-	if len(ciphertext) < keySize+authKeySize+ivSize {
-		return nil, errors.New("ciphertext too short")
-	}
-
-	// Extract the HMAC from the end of the ciphertext
-	hmacSum := ciphertext[len(ciphertext)-sha512.Size:]
-	ciphertextWithoutHMAC := ciphertext[:len(ciphertext)-sha512.Size]
-
-	// Step 2: Derive keys and IV using HKDF
-	info := []byte("doubleratchet.Encrypt") // has to be the same info as with encrypt
-	salt := make([]byte, hash().Size())
-	kdf := hkdf.New(hash, mk, salt, info)
-
-	keyMaterial := make([]byte, keySize+authKeySize+ivSize)
-	if _, err := io.ReadFull(kdf, keyMaterial); err != nil {
+		*s = backup
 		return nil, err
 	}
 
-	// Separate Key Material into the parts
-	encKey := keyMaterial[:keySize]
-	authKey := keyMaterial[keySize : keySize+authKeySize]
-	iv := keyMaterial[keySize+authKeySize:]
+	var mk []byte
+	s.CKr, mk = KDFChainKey(s.CKr)
+	s.Nr++
 
-	// Step 3: Verify HMAC
-	mac := hmac.New(hash, authKey)
-	mac.Write(associatedData)
-	mac.Write(ciphertextWithoutHMAC)
-	expectedHMAC := mac.Sum(nil)
-
-	if !hmac.Equal(hmacSum, expectedHMAC) {
-		return nil, errors.New("authentication failed")
-	}
-
-	// Step 4: Decrypt ciphertext using AES-256 in CBC mode
-	block, err := aes.NewCipher(encKey)
+	data, err := Concat(associatedData, info)
 	if err != nil {
+		*s = backup
 		return nil, err
 	}
 
-	mode := cipher.NewCBCDecrypter(block, iv)
-	paddedPlaintext := make([]byte, len(ciphertextWithoutHMAC))
-	mode.CryptBlocks(paddedPlaintext, ciphertextWithoutHMAC)
-
-	// Step 5: Unpad the plaintext
-	plaintext, err := unpadPKCS7(paddedPlaintext)
+	plaintext, err = Decrypt(mk, ciphertext, data)
 	if err != nil {
+		*s = backup
 		return nil, err
 	}
-
 	return plaintext, nil
 }
 
-func CreateHeader(dhPair *ecdh.PrivateKey, pn, n int) *MessageHeader {
-	return &MessageHeader{
-		DH: dhPair.PublicKey(),
-		PN: pn,
-		N:  n,
+/*
+def TrySkippedMessageKeys(state, header, ciphertext, AD):
+    if (header.dh, header.n) in state.MKSKIPPED:
+        mk = state.MKSKIPPED[header.dh, header.n]
+        del state.MKSKIPPED[header.dh, header.n]
+        return DECRYPT(mk, ciphertext, CONCAT(AD, header))
+    else:
+        return None
+*/
+
+func (s *State) trySkippedMessageKeys(header *Info, cypertext, associatedData []byte) ([]byte, error) {
+	key := mkSkippedKey{
+		DH: string(header.DH.Bytes()),
+		N:  header.N,
 	}
+
+	//fmt.Printf("TrySkippedMessageKey with key: %+v\n", key)
+
+	if mk, ok := s.MKSkipped[key]; ok {
+		//fmt.Printf("Found Skipped Message Key: %+v\n", key)
+		//fmt.Printf("Found Message Key: %+v\n", mk)
+		delete(s.MKSkipped, key)
+		//fmt.Printf("Found Message Key after deleting entry: %+v\n", mk)
+		data, err := Concat(associatedData, header)
+		if err != nil {
+			return nil, err
+		}
+		if mk == nil {
+			return nil, errors.New("mk is nil, error with pointer or smth")
+		}
+		tempPlaintext, tempErr := Decrypt(mk, cypertext, data)
+		if tempErr != nil {
+			//fmt.Printf("Error Decrypting Message Key: %+v with error: %s\n", key, err.Error())
+			return nil, tempErr
+		}
+		//fmt.Printf("Decrypted Plaintext: %s with Skipped Message Key: %+v\n", tempPlaintext, key)
+		return tempPlaintext, nil
+	}
+	//fmt.Printf("No Skipped Message Key Found with Key: %+v\n", key)
+	return nil, errors.New("no skipped message keys")
 }
 
-// Concat Encodes a message header into a parseable byte sequence, prepends the ad byte sequence, and returns the result.
-// If ad is not guaranteed to be a parseable byte sequence,
-// a length value should be prepended to the output to ensure that the output is parseable as a unique pair (ad, header).
-func Concat(ad []byte, header *MessageHeader) ([]byte, error) {
-	payload := ConcatenationPayload{
-		AD: ad,
-		Header: ConcatenationHeader{
-			DH: header.DH.Bytes(),
-			PN: header.PN,
-			N:  header.N,
-		},
+/*
+def SkipMessageKeys(state, until):
+    if state.Nr + MAX_SKIP < until:
+        raise Error()
+    if state.CKr != None:
+        while state.Nr < until:
+            state.CKr, mk = KDF_CK(state.CKr)
+            state.MKSKIPPED[state.DHr, state.Nr] = mk
+            state.Nr += 1
+*/
+
+func (s *State) skipMessageKeys(until int) error {
+	if s.Nr+MaxSkip < until {
+		return errors.New("skipping to many messages (MaxSkip)")
 	}
-
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-
-	err := enc.Encode(payload)
-	if err != nil {
-		return nil, err
+	//fmt.Printf("s.CKr: %s; length: %d\n", s.CKr, len(s.CKr))
+	if len(s.CKr) != 0 {
+		for s.Nr < until {
+			var mk []byte
+			s.CKr, mk = KDFChainKey(s.CKr)
+			key := mkSkippedKey{
+				DH: string(s.DHr.Bytes()),
+				N:  s.Nr,
+			}
+			//fmt.Printf("Skipping MessageKey with key: %+v\n", key)
+			s.MKSkipped[key] = mk
+			s.Nr++
+		}
+	} else {
+		//fmt.Println("s.CKr is nil, cannot skip message keys")
+		/*dhOut, err := DH(s.DHs, s.DHr)
+		if err != nil {
+			return err
+		}
+		s.RK, s.CKr, err = KDFRootKey(s.RK, dhOut)
+		if err != nil {
+			return err
+		}
+		s.Nr++*/
 	}
-
-	return buf.Bytes(), nil
+	return nil
 }
 
-func Parse(data []byte) (header *MessageHeader, associatedData []byte, err error) {
-	buf := bytes.NewBuffer(data)
+/*
+def DHRatchet(state, header):
+    state.PN = state.Ns
+    state.Ns = 0
+    state.Nr = 0
+    state.DHr = header.dh
+    state.RK, state.CKr = KDF_RK(state.RK, DH(state.DHs, state.DHr))
+    state.DHs = GENERATE_DH()
+    state.RK, state.CKs = KDF_RK(state.RK, DH(state.DHs, state.DHr))
+*/
 
-	dec := gob.NewDecoder(buf)
+func (s *State) dhRatchet(header *Info) error {
+	s.PN = s.Ns
+	s.Ns = 0
+	s.Nr = 0
+	s.DHr = header.DH
 
-	var payload ConcatenationPayload
-	err = dec.Decode(&payload)
+	// state.RK, state.CKr = KDF_RK(state.RK, DH(state.DHs, state.DHr))
+	dhOut, err := DH(s.DHs, s.DHr)
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
-
-	curve := ecdh.X25519()
-	dh, err := curve.NewPublicKey(payload.Header.DH)
+	s.RK, s.CKr, err = KDFRootKey(s.RK, dhOut)
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
 
-	header = &MessageHeader{
-		DH: dh,
-		PN: payload.Header.PN,
-		N:  payload.Header.N,
+	s.DHs, err = GenerateDH()
+	if err != nil {
+		return err
 	}
 
-	return header, payload.AD, nil
+	// state.RK, state.CKs = KDF_RK(state.RK, DH(state.DHs, state.DHr))
+	dhOut, err = DH(s.DHs, s.DHr)
+	if err != nil {
+		return err
+	}
+	s.RK, s.CKs, err = KDFRootKey(s.RK, dhOut)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *State) toString() string {
+	return fmt.Sprintf("State{DHs: %s, DHr: %s, RK: %s, CKs: %s, CKr: %s, Ns: %d, Nr: %d, PN: %d, MKSkipped: %v}",
+		byteSliceToBase64(s.DHs.PublicKey().Bytes()),
+		byteSliceToBase64(s.DHr.Bytes()),
+		byteSliceToBase64(s.RK),
+		byteSliceToBase64(s.CKs),
+		byteSliceToBase64(s.CKr),
+		s.Ns,
+		s.Nr,
+		s.PN,
+		maps.Keys(s.MKSkipped),
+	)
+}
+
+func byteSliceToBase64(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(data)[:5]
 }
