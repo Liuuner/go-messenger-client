@@ -6,7 +6,7 @@ import (
 )
 
 type message struct {
-	header     *Info
+	header     *MessageHeader
 	ciphertext []byte
 	plaintext  []byte
 }
@@ -136,7 +136,7 @@ func receiveMessage(t *testing.T, s *State, messages []*message, n int) []byte {
 	ad := []byte("associatedData")
 	decryptedPlaintext, err := s.RatchetDecrypt(message.header, message.ciphertext, ad)
 	if err != nil {
-		t.Fatal("Could not decrypt message", err.Error())
+		t.Fatal("Could not decrypt message:", err.Error())
 	}
 
 	if !bytes.Equal(message.plaintext, decryptedPlaintext) {

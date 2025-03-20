@@ -1,10 +1,12 @@
-package types
+package doubleratchet
 
 import (
 	"bytes"
 	"crypto/ecdh"
 	"encoding/gob"
 )
+
+const MaxSkip = 50
 
 // MessageHeader holds the Double Ratchet message header.
 // has to stay public for parsing
