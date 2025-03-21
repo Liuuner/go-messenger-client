@@ -15,23 +15,6 @@ import (
 	"io"
 )
 
-type mkSkippedKey struct {
-	DH string
-	N  int
-}
-
-// State variables
-type State struct {
-	DHs       *ecdh.PrivateKey        // DH Ratchet key pair (sending)
-	DHr       *ecdh.PublicKey         // DH Ratchet public key (received)
-	RK        []byte                  // Root key
-	CKs       []byte                  // Chain key (sending)
-	CKr       []byte                  // Chain key (receiving)
-	Ns, Nr    int                     // Message numbers for sending and receiving
-	PN        int                     // Number of messages in the previous sending chain
-	MKSkipped map[mkSkippedKey][]byte // Skipped message keys
-}
-
 // GenerateDH returns a new Diffie-Hellman key pair
 func GenerateDH() (*ecdh.PrivateKey, error) {
 	curve := ecdh.X25519()

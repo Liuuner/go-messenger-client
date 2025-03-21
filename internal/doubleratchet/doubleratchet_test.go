@@ -95,16 +95,17 @@ func initTest(t *testing.T, sharedSecret []byte) (s *testState) {
 		t: t,
 	}
 
-	bobKeyPair, err := GenerateDH()
+	var err error
+	
+	//s.bob = RatchetInitBob(sharedSecret, bobKeyPair)
+	s.bob, err = New(sharedSecret, nil)
 	if err != nil {
-		t.Fatal("Could not generate KeyPair", err.Error())
+		t.Fatal("Could not create Bob Doubleratchet", err.Error())
 	}
 
-	s.bob = RatchetInitBob(sharedSecret, bobKeyPair)
-
-	s.alice, err = RatchetInitAlice(sharedSecret, bobKeyPair.PublicKey())
+	s.alice, err = RatchetInitAlice(sharedSecret, s.bob.GetPublicKey())
 	if err != nil {
-		t.Fatal("Could not init Alice", err.Error())
+		t.Fatal("Could not create Alice Doubleratchet", err.Error())
 	}
 	return
 }
@@ -129,6 +130,9 @@ func sendMessage(t *testing.T, s *State, msg string) *message {
 }
 
 func receiveMessage(t *testing.T, s *State, messages []*message, n int) []byte {
+	if len(messages) < n && messages[n-1] == nil {
+		t.Fatal("Message not found")
+	}
 	message := messages[n-1]
 	messages[n-1] = nil
 	//fmt.Printf("################## receiveMessage %d ##################\n", n)
