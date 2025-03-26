@@ -16,4 +16,4 @@ unclear:
  - how to store session data securely? (doubleratchet state)
     - encrypted in database?
     - in encrypted binary file
-    - 
+    -

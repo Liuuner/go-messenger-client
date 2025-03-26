@@ -15,34 +15,41 @@ type mkSkippedKey struct {
 
 // State variables
 type State struct {
-	DHs       *ecdh.PrivateKey        // DH Ratchet key pair (sending)
-	DHr       *ecdh.PublicKey         // DH Ratchet public key (received)
-	RK        []byte                  // Root key
-	CKs       []byte                  // Chain key (sending)
-	CKr       []byte                  // Chain key (receiving)
-	Ns, Nr    int                     // Message numbers for sending and receiving
-	PN        int                     // Number of messages in the previous sending chain
-	MKSkipped map[mkSkippedKey][]byte // Skipped message keys
+	AssociatedData *associatedData         // Associated data
+	DHs            *ecdh.PrivateKey        // DH Ratchet key pair (sending)
+	DHr            *ecdh.PublicKey         // DH Ratchet public key (received)
+	RK             []byte                  // Root key
+	CKs            []byte                  // Chain key (sending)
+	CKr            []byte                  // Chain key (receiving)
+	Ns, Nr         int                     // Message numbers for sending and receiving
+	PN             int                     // Number of messages in the previous sending chain
+	MKSkipped      map[mkSkippedKey][]byte // Skipped message keys
 }
 
-func New(sharedSecret []byte, publicKey *ecdh.PublicKey) (*State, error) {
+func New(sharedSecret []byte, remotePublicKey *ecdh.PublicKey, localIK, remoteIK ecdh.PublicKey) (*State, error) {
 	keyPair, err := GenerateDH()
 	if err != nil {
 		return nil, err
 	}
-	s := &State{
-		DHs:       keyPair,
-		DHr:       publicKey,
-		RK:        sharedSecret,
-		CKs:       nil,
-		CKr:       nil,
-		Ns:        0,
-		Nr:        0,
-		PN:        0,
-		MKSkipped: make(map[mkSkippedKey][]byte),
+	ad := &associatedData{
+		localIdentityKey:  localIK,
+		remoteIdentityKey: remoteIK,
 	}
 
-	if publicKey != nil {
+	s := &State{
+		AssociatedData: ad,
+		DHs:            keyPair,
+		DHr:            remotePublicKey,
+		RK:             sharedSecret,
+		CKs:            nil,
+		CKr:            nil,
+		Ns:             0,
+		Nr:             0,
+		PN:             0,
+		MKSkipped:      make(map[mkSkippedKey][]byte),
+	}
+
+	if remotePublicKey != nil {
 		dhOut, err := DH(s.DHs, s.DHr)
 		if err != nil {
 			return nil, err
@@ -57,34 +64,6 @@ func New(sharedSecret []byte, publicKey *ecdh.PublicKey) (*State, error) {
 }
 
 /*
-def RatchetInitBob(state, SK, bob_dh_key_pair):
-    state.DHs = bob_dh_key_pair
-    state.DHr = None
-    state.RK = SK
-    state.CKs = None
-    state.CKr = None
-    state.Ns = 0
-    state.Nr = 0
-    state.PN = 0
-    state.MKSKIPPED = {}
-*/
-
-// secretKey is the shared secret
-func RatchetInitBob(secretKey []byte, bobDHKeyPair *ecdh.PrivateKey) *State {
-	return &State{
-		DHs:       bobDHKeyPair,
-		DHr:       nil,
-		RK:        secretKey,
-		CKs:       nil,
-		CKr:       nil,
-		Ns:        0,
-		Nr:        0,
-		PN:        0,
-		MKSkipped: make(map[mkSkippedKey][]byte),
-	}
-}
-
-/*
 def RatchetInitAlice(state, SK, bob_dh_public_key):
     state.DHs = GENERATE_DH()
     state.DHr = bob_dh_public_key
@@ -95,7 +74,7 @@ def RatchetInitAlice(state, SK, bob_dh_public_key):
     state.PN = 0
     state.MKSKIPPED = {}
 */
-
+/*
 // secretKey is the shared secret
 func RatchetInitAlice(secretKey []byte, bobDHPublicKey *ecdh.PublicKey) (s *State, err error) {
 	s = &State{
@@ -122,7 +101,7 @@ func RatchetInitAlice(secretKey []byte, bobDHPublicKey *ecdh.PublicKey) (s *Stat
 	}
 
 	return s, nil
-}
+}*/
 
 /*
 def RatchetEncrypt(state, plaintext, AD):
@@ -132,7 +111,7 @@ def RatchetEncrypt(state, plaintext, AD):
 	return header, ENCRYPT(mk, plaintext, CONCAT(AD, header))
 */
 
-func (s *State) RatchetEncrypt(plaintext, associatedData []byte) (header *MessageHeader, ciphertext []byte, err error) {
+func (s *State) RatchetEncrypt(plaintext, associatedData []byte) (header *RatchetHeader, ciphertext []byte, err error) {
 	var mk []byte
 	s.CKs, mk = KDFChainKey(s.CKs)
 	s.Ns++
@@ -166,7 +145,7 @@ def RatchetDecrypt(state, header, ciphertext, AD):
     return DECRYPT(mk, ciphertext, CONCAT(AD, header))
 */
 
-func (s *State) RatchetDecrypt(header *MessageHeader, ciphertext, associatedData []byte) (plaintext []byte, err error) {
+func (s *State) RatchetDecrypt(header *RatchetHeader, ciphertext, associatedData []byte) (plaintext []byte, err error) {
 	backup := *s
 
 	plaintext, err = s.trySkippedMessageKeys(header, ciphertext, associatedData)
@@ -179,14 +158,14 @@ func (s *State) RatchetDecrypt(header *MessageHeader, ciphertext, associatedData
 	if header.DH == nil {
 		return nil, errors.New("header.DH is nil")
 	}
+
+	// has to be set for initial message
 	if s.DHr == nil {
-		//fmt.Println("s.DHr is nil")
 		// TODO maybe s.DHr should be set to header.DH
 		s.DHr = header.DH
-		//return nil, errors.New("s.DHr is nil")
 	}
 
-	// make ratchet step if first message
+	// make ratchet step if initial message
 	if len(s.CKr) == 0 {
 		//fmt.Println("s.CKr is nil")
 		err = s.dhRatchet(header)
@@ -196,7 +175,6 @@ func (s *State) RatchetDecrypt(header *MessageHeader, ciphertext, associatedData
 			return nil, err
 		}
 	}
-	//fmt.Println(s.toString())
 
 	//fmt.Printf("RatchetDecrypt header.DH: %s, s.DHr: %s\n", header.DH.Bytes(), s.DHr.Bytes())
 	if !header.DH.Equal(s.DHr) {
@@ -253,7 +231,7 @@ def TrySkippedMessageKeys(state, header, ciphertext, AD):
         return None
 */
 
-func (s *State) trySkippedMessageKeys(header *MessageHeader, cypertext, associatedData []byte) ([]byte, error) {
+func (s *State) trySkippedMessageKeys(header *RatchetHeader, cypertext, associatedData []byte) ([]byte, error) {
 	key := mkSkippedKey{
 		DH: string(header.DH.Bytes()),
 		N:  header.N,
@@ -339,7 +317,7 @@ def DHRatchet(state, header):
     state.RK, state.CKs = KDF_RK(state.RK, DH(state.DHs, state.DHr))
 */
 
-func (s *State) dhRatchet(header *MessageHeader) error {
+func (s *State) dhRatchet(header *RatchetHeader) error {
 	s.PN = s.Ns
 	s.Ns = 0
 	s.Nr = 0

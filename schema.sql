@@ -1,6 +1,8 @@
 CREATE TABLE IF NOT EXISTS chat (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL
+    id TEXT PRIMARY KEY, /* hash of the username */
+    username TEXT NOT NULL,
+    encrypted BOOLEAN NOT NULL,
+    timestamp_last_message TIMESTAMP NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS message (
@@ -8,7 +10,8 @@ CREATE TABLE IF NOT EXISTS message (
     chat_id TEXT NOT NULL,
     type TEXT NOT NULL,
     content BLOB NOT NULL,
-    created_at TIMESTAMP NOT NULL,
+    encrypted BOOLEAN NOT NULL,
+    timestamp INTEGER NOT NULL,
     FOREIGN KEY (chat_id) REFERENCES chat(id)
 );
 
@@ -28,16 +31,7 @@ CREATE TABLE IF NOT EXISTS message (
 CREATE TABLE IF NOT EXISTS session (
     id TEXT PRIMARY KEY,
     chat_id TEXT NOT NULL,
-
-    dh_s BLOB NOT NULL,
-    dh_r BLOB NOT NULL,
-    rk BLOB NOT NULL,
-    cks BLOB NOT NULL,
-    ckr BLOB NOT NULL,
-    ns INTEGER NOT NULL,
-    nr INTEGER NOT NULL,
-    pn INTEGER NOT NULL,
-    mk_skipped BLOB NOT NULL,
-
+    state BLOB NOT NULL,
+    encrypted BOOLEAN NOT NULL,
     FOREIGN KEY (chat_id) REFERENCES chat(id)
 )

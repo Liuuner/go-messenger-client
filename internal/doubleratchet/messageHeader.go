@@ -8,23 +8,23 @@ import (
 
 const MaxSkip = 50
 
-// MessageHeader holds the Double Ratchet message header.
+// RatchetHeader holds the Double Ratchet message header.
 // has to stay public for parsing
-type MessageHeader struct {
+type RatchetHeader struct {
 	DH *ecdh.PublicKey // Ratchet public key
 	PN int             // Previous chain length
 	N  int             // Message number
 }
 
-func CreateMessageHeader(dhPair *ecdh.PrivateKey, pn, n int) *MessageHeader {
-	return &MessageHeader{
+func CreateMessageHeader(dhPair *ecdh.PrivateKey, pn, n int) *RatchetHeader {
+	return &RatchetHeader{
 		DH: dhPair.PublicKey(),
 		PN: pn,
 		N:  n,
 	}
 }
 
-func (h *MessageHeader) Equals(other *MessageHeader) bool {
+func (h *RatchetHeader) Equals(other *RatchetHeader) bool {
 	if h == nil && other == nil {
 		return true
 	}
@@ -55,7 +55,7 @@ type ConcatenationHeader struct {
 // ConcatHeader Encodes a message header into a parseable byte sequence, prepends the ad byte sequence, and returns the result.
 // If ad is not guaranteed to be a parseable byte sequence,
 // a length value should be prepended to the output to ensure that the output is parseable as a unique pair (ad, header).
-func ConcatHeader(ad []byte, header *MessageHeader) ([]byte, error) {
+func ConcatHeader(ad []byte, header *RatchetHeader) ([]byte, error) {
 	payload := ConcatenationPayload{
 		AD: ad,
 		Header: ConcatenationHeader{
@@ -76,7 +76,7 @@ func ConcatHeader(ad []byte, header *MessageHeader) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func ParseHeader(data []byte) (header *MessageHeader, associatedData []byte, err error) {
+func ParseHeader(data []byte) (header *RatchetHeader, associatedData []byte, err error) {
 	buf := bytes.NewBuffer(data)
 
 	dec := gob.NewDecoder(buf)
@@ -93,7 +93,7 @@ func ParseHeader(data []byte) (header *MessageHeader, associatedData []byte, err
 		return nil, nil, err
 	}
 
-	header = &MessageHeader{
+	header = &RatchetHeader{
 		DH: dh,
 		PN: payload.Header.PN,
 		N:  payload.Header.N,

@@ -33,7 +33,7 @@ func TestEncryptAndDecryptIntegration(t *testing.T) {
 	}
 	dh := dhKP.PublicKey()
 
-	header := &MessageHeader{
+	header := &RatchetHeader{
 		DH: dh,
 		PN: 13,
 		N:  3,

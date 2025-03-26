@@ -1,33 +1,38 @@
-package signal
+package session
 
 import (
-	"crypto/ecdh"
 	"signal/internal/doubleratchet"
-	"signal/internal/types"
 )
 
 // Session State variables required for a session (maybe user, ...)
 type Session struct {
-	User string
+	AssociatedData *doubleratchet.associatedData
+	/*
+		Alice then calculates an "associated data" byte sequence AD that contains identity information for both parties:
+
+		    AD = Encode(IKA) || Encode(IKB)
+
+		Alice may optionally append additional information to AD, such as Alice and Bob's usernames, certificates, or other identifying information.
+	*/
 	*doubleratchet.State
 }
 
-func NewSession(user string, sharedSecret []byte, publicKey *ecdh.PublicKey) (*Session, error) {
+/*func NewSession(sharedSecret []byte, publicKey *ecdh.PublicKey) (*Session, error) {
 	drState, err := doubleratchet.New(sharedSecret, publicKey)
 	if err != nil {
 		return nil, err
 	}
+	ad := []byte("associatedData")
 	session := &Session{
-		user,
+		ad,
 		drState,
 	}
 	return session, nil
 }
 
 func (s *Session) CreateEncryptedMessage(plaintext []byte) (*types.Message, error) {
-	ad := []byte("associatedData")
 
-	header, ciphertext, err := s.RatchetEncrypt(plaintext, ad)
+	header, ciphertext, err := s.RatchetEncrypt(plaintext, s.AssociatedData)
 	if err != nil {
 		return nil, err
 	}
@@ -43,3 +48,4 @@ func (s *Session) DecryptMessage(message *types.Message) ([]byte, error) {
 	ad := []byte("associatedData")
 	return s.RatchetDecrypt(message.Header, message.Ciphertext, ad)
 }
+*/

@@ -2,18 +2,22 @@ package doubleratchet
 
 import (
 	"bytes"
+	"crypto/ecdh"
+	"crypto/rand"
 	"testing"
 )
 
 type message struct {
-	header     *MessageHeader
+	header     *RatchetHeader
 	ciphertext []byte
 	plaintext  []byte
 }
 
 type testState struct {
 	bob               *State
+	ikBob             *ecdh.PublicKey
 	alice             *State
+	ikAlice           *ecdh.PublicKey
 	aliceSentMessages []*message
 	bobSentMessages   []*message
 	t                 *testing.T
@@ -91,12 +95,21 @@ func (s *testState) bobReceiveMessageUnsafe(message *message) error {
 }
 
 func initTest(t *testing.T, sharedSecret []byte) (s *testState) {
+	ikBob, err := GenerateDH()
+	if err != nil {
+		t.Fatal("Could not generate DH key pair", err.Error())
+	}
+	ikAlice, err := GenerateDH()
+	if err != nil {
+		t.Fatal("Could not generate DH key pair", err.Error())
+	}
+
 	s = &testState{
 		t: t,
 	}
 
 	var err error
-	
+
 	//s.bob = RatchetInitBob(sharedSecret, bobKeyPair)
 	s.bob, err = New(sharedSecret, nil)
 	if err != nil {
