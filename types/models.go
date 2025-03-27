@@ -8,7 +8,7 @@ type SessionModel struct {
 	Encrypted bool
 }
 
-type MessageModel struct {
+type MessageModel struct { // TODO ????
 	Id        string // uuid
 	ChatId    string
 	Type      string
@@ -18,7 +18,7 @@ type MessageModel struct {
 }
 
 type ChatModel struct {
-	Id                   string
+	Id                   string // Public IdentityKey of the chat partner as string
 	Username             string
 	Encrypted            bool
 	TimestampLastMessage time.Time

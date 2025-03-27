@@ -1,12 +1,16 @@
 package session
 
 import (
+	"bytes"
+	"crypto/ecdh"
+	"encoding/gob"
 	"signal/internal/doubleratchet"
+	"signal/types"
 )
 
 // Session State variables required for a session (maybe user, ...)
 type Session struct {
-	AssociatedData *doubleratchet.associatedData
+	associatedData *associatedData
 	/*
 		Alice then calculates an "associated data" byte sequence AD that contains identity information for both parties:
 
@@ -14,38 +18,30 @@ type Session struct {
 
 		Alice may optionally append additional information to AD, such as Alice and Bob's usernames, certificates, or other identifying information.
 	*/
-	*doubleratchet.State
+	dr *doubleratchet.State
 }
 
-/*func NewSession(sharedSecret []byte, publicKey *ecdh.PublicKey) (*Session, error) {
-	drState, err := doubleratchet.New(sharedSecret, publicKey)
+func CreateSessionAndInitialMessage(username string, preKeyBundle types.PreKeyBundle, message []byte) (*Session, *types.InitialMessageDTO, error) {
+
+}
+
+func CreateSessionFromInitialMessage(username string, initialMessage types.InitialMessageDTO, oneTimePreKey *ecdh.PublicKey) (*Session, error) {
+
+}
+
+func (s *Session) EncryptMessage(message []byte) (types.MessageDTO, error) {
+	ad := s.associatedData.encodeForEncryption()
+}
+
+func (s *Session) DecryptMessage(message types.MessageDTO) ([]byte, error) {
+	ad := s.associatedData.encodeForDecryption()
+}
+
+func (s *Session) Serialize() []byte {
+	var buffer bytes.Buffer
+	encoder := gob.NewEncoder(&buffer)
+	err := encoder.Encode(s)
 	if err != nil {
-		return nil, err
+		return nil
 	}
-	ad := []byte("associatedData")
-	session := &Session{
-		ad,
-		drState,
-	}
-	return session, nil
 }
-
-func (s *Session) CreateEncryptedMessage(plaintext []byte) (*types.Message, error) {
-
-	header, ciphertext, err := s.RatchetEncrypt(plaintext, s.AssociatedData)
-	if err != nil {
-		return nil, err
-	}
-
-	return &types.Message{
-		Ciphertext: ciphertext,
-		Header:     header,
-	}, nil
-}
-
-func (s *Session) DecryptMessage(message *types.Message) ([]byte, error) {
-	// TODO idk if ad should be like this
-	ad := []byte("associatedData")
-	return s.RatchetDecrypt(message.Header, message.Ciphertext, ad)
-}
-*/

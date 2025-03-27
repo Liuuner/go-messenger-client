@@ -3,10 +3,10 @@ package types
 import "crypto/ecdh"
 
 type PreKeyBundle struct {
-	IdentityKey     *ecdh.PublicKey // Bob's identity key IKB
-	SignedPreKey    *ecdh.PublicKey // Bob's signed prekey SPKB
-	PreKeySignature []byte          // Bob's prekey signature Sig(IKB, Encode(SPKB))
-	OneTimePreKey   *ecdh.PublicKey // (Optionally) Bob's one-time prekey OPKB
+	IdentityKey     *ecdh.PublicKey // Bob's identity key IK
+	SignedPreKey    *ecdh.PublicKey // Bob's signed prekey SPK
+	PreKeySignature []byte          // Bob's prekey signature Sig(IKB, Encode(SPK))
+	OneTimePreKey   *ecdh.PublicKey // (Optionally) Bob's one-time prekey OPK
 }
 
 /*

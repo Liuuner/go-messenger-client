@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
 	"maps"
 )
 
@@ -15,38 +16,38 @@ type mkSkippedKey struct {
 
 // State variables
 type State struct {
-	AssociatedData *associatedData         // Associated data
-	DHs            *ecdh.PrivateKey        // DH Ratchet key pair (sending)
-	DHr            *ecdh.PublicKey         // DH Ratchet public key (received)
-	RK             []byte                  // Root key
-	CKs            []byte                  // Chain key (sending)
-	CKr            []byte                  // Chain key (receiving)
-	Ns, Nr         int                     // Message numbers for sending and receiving
-	PN             int                     // Number of messages in the previous sending chain
-	MKSkipped      map[mkSkippedKey][]byte // Skipped message keys
+	//AssociatedData *associatedData         // Associated data
+	DHs       *ecdh.PrivateKey        // DH Ratchet key pair (sending)
+	DHr       *ecdh.PublicKey         // DH Ratchet public key (received)
+	RK        []byte                  // Root key
+	CKs       []byte                  // Chain key (sending)
+	CKr       []byte                  // Chain key (receiving)
+	Ns, Nr    int                     // Message numbers for sending and receiving
+	PN        int                     // Number of messages in the previous sending chain
+	MKSkipped map[mkSkippedKey][]byte // Skipped message keys
 }
 
-func New(sharedSecret []byte, remotePublicKey *ecdh.PublicKey, localIK, remoteIK ecdh.PublicKey) (*State, error) {
+func New(sharedSecret []byte, remotePublicKey *ecdh.PublicKey) (*State, error) {
 	keyPair, err := GenerateDH()
 	if err != nil {
 		return nil, err
 	}
-	ad := &associatedData{
+	/*ad := &associatedData{
 		localIdentityKey:  localIK,
 		remoteIdentityKey: remoteIK,
-	}
+	}*/
 
 	s := &State{
-		AssociatedData: ad,
-		DHs:            keyPair,
-		DHr:            remotePublicKey,
-		RK:             sharedSecret,
-		CKs:            nil,
-		CKr:            nil,
-		Ns:             0,
-		Nr:             0,
-		PN:             0,
-		MKSkipped:      make(map[mkSkippedKey][]byte),
+		//AssociatedData: ad,
+		DHs:       keyPair,
+		DHr:       remotePublicKey,
+		RK:        sharedSecret,
+		CKs:       nil,
+		CKr:       nil,
+		Ns:        0,
+		Nr:        0,
+		PN:        0,
+		MKSkipped: make(map[mkSkippedKey][]byte),
 	}
 
 	if remotePublicKey != nil {
@@ -162,6 +163,7 @@ func (s *State) RatchetDecrypt(header *RatchetHeader, ciphertext, associatedData
 	// has to be set for initial message
 	if s.DHr == nil {
 		// TODO maybe s.DHr should be set to header.DH
+		log.Print("WARN! s.DHr is set to incoming header.DH, might be a security issue")
 		s.DHr = header.DH
 	}
 
@@ -231,7 +233,7 @@ def TrySkippedMessageKeys(state, header, ciphertext, AD):
         return None
 */
 
-func (s *State) trySkippedMessageKeys(header *RatchetHeader, cypertext, associatedData []byte) ([]byte, error) {
+func (s *State) trySkippedMessageKeys(header *RatchetHeader, ciphertext, associatedData []byte) ([]byte, error) {
 	key := mkSkippedKey{
 		DH: string(header.DH.Bytes()),
 		N:  header.N,
@@ -251,7 +253,7 @@ func (s *State) trySkippedMessageKeys(header *RatchetHeader, cypertext, associat
 		if mk == nil {
 			return nil, errors.New("mk is nil, error with pointer or smth")
 		}
-		tempPlaintext, tempErr := Decrypt(mk, cypertext, data)
+		tempPlaintext, tempErr := Decrypt(mk, ciphertext, data)
 		if tempErr != nil {
 			//fmt.Printf("Error Decrypting Message Key: %+v with error: %s\n", key, err.Error())
 			return nil, tempErr

@@ -9,6 +9,12 @@ type Storage interface {
 }
 
 type Transport interface {
-	SendMessage(to string, message EncryptedMessage) error
-	ReceiveMessages() (<-chan EncryptedMessage, error)
+	// TODO authentication
+	SendMessage(message MessageDTO) error
+	SendInitialMessage(message InitialMessageDTO) error
+	ReceiveMessages() (<-chan MessageDTO, <-chan InitialMessageDTO, error)
+}
+
+type UI interface {
+	SendMessage(user string, message Message) error
 }

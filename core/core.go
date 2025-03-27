@@ -2,15 +2,19 @@ package core
 
 import (
 	"crypto/ecdh"
+	"signal/internal/session"
 	"signal/types"
 )
 
 type Core struct {
 	identityKey    *ecdh.PrivateKey
 	masterPassword string
+	username       string
 	encryptData    bool
 	transport      *types.Transport
 	storage        *types.Storage
+	sessions       map[string]*session.Session
+	preKeys        map[string]*ecdh.PrivateKey
 }
 
 func NewDefault() *Core {

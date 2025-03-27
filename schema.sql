@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS chat (
-    id TEXT PRIMARY KEY, /* hash of the username */
+    id TEXT PRIMARY KEY, /* public identityKey as string */
     username TEXT NOT NULL,
     encrypted BOOLEAN NOT NULL,
     timestamp_last_message TIMESTAMP NOT NULL

@@ -1,4 +1,4 @@
-package doubleratchet
+package session
 
 import "crypto/ecdh"
 
