@@ -1,15 +1,9 @@
 package x3dh
 
-import (
-	"crypto/ecdh"
-	"crypto/ed25519"
-	"signal/internal/doubleratchet"
-)
-
 /**
 https://lianglouise.github.io/post/some_practice_on_implementing_signal_protocol_with_python_1/
 **/
-
+/*
 type User struct {
 	name               string
 	IdentityKey        *ecdh.PrivateKey       // Long-Term Identity Key (32 bytes), which is an unique identifier for each client
@@ -67,3 +61,4 @@ func getPublicKeysBytes(keys []*ecdh.PrivateKey) []*ecdh.PublicKey {
 	}
 	return publicKeys
 }
+*/

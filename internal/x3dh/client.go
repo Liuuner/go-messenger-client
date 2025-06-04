@@ -1,5 +1,6 @@
 package x3dh
 
+/*
 import (
 	"crypto/aes"
 	"crypto/cipher"
@@ -173,3 +174,4 @@ func (c *Client) BuildX3DHHello(userName string, ad string) (*KeyBundleSending, 
 		OneTimePreKeys:     keyBundle.OneTimePreKeys,
 	}, nil
 }
+*/

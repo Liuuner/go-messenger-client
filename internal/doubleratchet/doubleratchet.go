@@ -16,7 +16,6 @@ type mkSkippedKey struct {
 
 // State variables
 type State struct {
-	//AssociatedData *associatedData         // Associated data
 	DHs       *ecdh.PrivateKey        // DH Ratchet key pair (sending)
 	DHr       *ecdh.PublicKey         // DH Ratchet public key (received)
 	RK        []byte                  // Root key
@@ -32,13 +31,8 @@ func New(sharedSecret []byte, remotePublicKey *ecdh.PublicKey) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	/*ad := &associatedData{
-		localIdentityKey:  localIK,
-		remoteIdentityKey: remoteIK,
-	}*/
 
 	s := &State{
-		//AssociatedData: ad,
 		DHs:       keyPair,
 		DHr:       remotePublicKey,
 		RK:        sharedSecret,

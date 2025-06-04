@@ -1,8 +1,10 @@
 package types
 
 import (
+	"bytes"
 	"crypto/ecdh"
-	"signal/internal/doubleratchet"
+	"encoding/gob"
+	"github.com/Liuuner/signal/internal/doubleratchet"
 	"time"
 )
 
@@ -15,37 +17,51 @@ type Message struct {
 	Timestamp   time.Time
 }
 
-/*func (m *Message) Serialize() ([]byte, error) {
-	var buffer bytes.Buffer
-	encoder := gob.NewEncoder(&buffer)
-	err := encoder.Encode(m)
-	if err != nil {
-		return nil, err
-	}
-	return buffer.Bytes(), nil
+type messageBody struct {
+	Body        []byte
+	ContentType string
+	Timestamp   time.Time
 }
 
-func DeserializeMessage(data []byte) (*Message, error) {
-	var message Message
-	buffer := bytes.NewBuffer(data)
-	decoder := gob.NewDecoder(buffer)
-	err := decoder.Decode(&message)
+func (m Message) BodySerialize() ([]byte, error) {
+	mb := messageBody{
+		Body:        m.Body,
+		ContentType: m.ContentType,
+		Timestamp:   m.Timestamp,
+	}
+
+	// serialize message body with gob
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	err := enc.Encode(mb)
 	if err != nil {
 		return nil, err
 	}
-	return &message, nil
-}*/
+	return buf.Bytes(), nil
+}
 
-type SerializedMessage []byte
-type EncryptedMessage []byte
+func MessageDTOBodyDeserialize(body []byte) (*Message, error) {
+	mb := &messageBody{}
+	buf := bytes.NewBuffer(body)
+	dec := gob.NewDecoder(buf)
+	err := dec.Decode(mb)
+	if err != nil {
+		return nil, err
+	}
+	return &Message{
+		Body:        mb.Body,
+		ContentType: mb.ContentType,
+		Timestamp:   mb.Timestamp,
+	}, nil
+}
 
 type MessageDTO struct {
 	From   ecdh.PublicKey // sending IdentityKey
+	To     ecdh.PublicKey // receiving IdentityKey
 	Header doubleratchet.RatchetHeader
-	Body   EncryptedMessage
+	Body   []byte // encrypted message + content type + timestamp
 
 	// for initial message
-	IsInitialMessage bool
-	EphemeralKey     []byte
-	PreKeyId         string
+	EphemeralKey []byte
+	PreKeyId     string
 }

@@ -7,6 +7,7 @@ type PreKeyBundle struct {
 	SignedPreKey    *ecdh.PublicKey // Bob's signed prekey SPK
 	PreKeySignature []byte          // Bob's prekey signature Sig(IKB, Encode(SPK))
 	OneTimePreKey   *ecdh.PublicKey // (Optionally) Bob's one-time prekey OPK
+	OneTimePreKeyId string          // (Optionally) Bob's one-time prekey ID so Alice can tell Bob which one-time prekey she used
 }
 
 /*

@@ -6,15 +6,13 @@ type Storage interface {
 	LoadMessages(sessionId string) ([]MessageModel, error)
 	SaveSession(sessionId string, session SessionModel) error
 	LoadSession(sessionId string) (SessionModel, error)
+	GetChatById(chatId string) (ChatModel, error)
+	GetChatByUsername(username string) (ChatModel, error)
 }
 
 type Transport interface {
 	// TODO authentication
 	SendMessage(message MessageDTO) error
-	SendInitialMessage(message InitialMessageDTO) error
-	ReceiveMessages() (<-chan MessageDTO, <-chan InitialMessageDTO, error)
-}
-
-type UI interface {
-	SendMessage(user string, message Message) error
+	SendInitialMessage(message MessageDTO) error
+	ReceiveMessages() (<-chan MessageDTO, error)
 }
